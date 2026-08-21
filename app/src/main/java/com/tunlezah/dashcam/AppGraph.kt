@@ -61,7 +61,14 @@ class AppGraph(private val context: Context) {
 
     private val mediaProbe = MediaProbe { file -> probeDuration(file) }
 
-    val startupRecovery = StartupRecovery(database.segmentDao(), storageLocations, mediaProbe, diagnostics)
+    val startupRecovery = StartupRecovery(
+        segmentDao = database.segmentDao(),
+        loopDir = storageLocations.loopDir,
+        protectedDir = storageLocations.protectedDir,
+        quarantineDir = storageLocations.quarantineDir,
+        probe = mediaProbe,
+        diagnostics = diagnostics,
+    )
 
     val thermalEngine = ThermalEngine(
         source = AndroidThermalSource(context, diagnostics, appScope),

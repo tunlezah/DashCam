@@ -62,9 +62,19 @@ class EventDetector(
     private var thresholds = Thresholds.forSensitivity(sensitivity)
 
     // --- Stage 1: gravity tracking ---
+    // Two trackers, deliberately different time constants:
+    //  * SLOW gravity extracts linear acceleration. Its update rate collapses
+    //    while large linear acceleration is present, so sustained braking is
+    //    not absorbed into the gravity estimate (a single-alpha filter with
+    //    τ≈1s eats a 1.5 s brake event — caught by unit test).
+    //  * FAST gravity follows orientation quickly and is compared against a
+    //    calm-time reference to detect the phone being knocked from its cradle.
     private var gx = 0f
     private var gy = 0f
     private var gz = 9.81f
+    private var fgx = 0f
+    private var fgy = 0f
+    private var fgz = 9.81f
     private var gravityInitialized = false
 
     // Reference gravity for cradle-movement detection.
@@ -152,18 +162,30 @@ class EventDetector(
     private fun updateGravity(sample: AccelSample) {
         if (!gravityInitialized) {
             gx = sample.x; gy = sample.y; gz = sample.z
+            fgx = gx; fgy = gy; fgz = gz
             refGx = gx; refGy = gy; refGz = gz
             refSetMs = sample.timestampMs
             gravityInitialized = true
             return
         }
-        gx += GRAVITY_ALPHA * (sample.x - gx)
-        gy += GRAVITY_ALPHA * (sample.y - gy)
-        gz += GRAVITY_ALPHA * (sample.z - gz)
+        // Deviation from the slow gravity estimate: while it is large, real
+        // linear acceleration is happening and the slow tracker nearly freezes.
+        val dx = sample.x - gx
+        val dy = sample.y - gy
+        val dz = sample.z - gz
+        val deviation = sqrt(dx * dx + dy * dy + dz * dz)
+        val alpha = if (deviation > GRAVITY_GATE_MPS2) GRAVITY_ALPHA_GATED else GRAVITY_ALPHA
+        gx += alpha * dx
+        gy += alpha * dy
+        gz += alpha * dz
+
+        fgx += FAST_GRAVITY_ALPHA * (sample.x - fgx)
+        fgy += FAST_GRAVITY_ALPHA * (sample.y - fgy)
+        fgz += FAST_GRAVITY_ALPHA * (sample.z - fgz)
 
         // Refresh the reference orientation slowly while things are calm.
-        if (sample.timestampMs - refSetMs > REF_REFRESH_MS && !windowOpen) {
-            refGx = gx; refGy = gy; refGz = gz
+        if (sample.timestampMs - refSetMs > REF_REFRESH_MS && !windowOpen && deviation < GRAVITY_GATE_MPS2) {
+            refGx = fgx; refGy = fgy; refGz = fgz
             refSetMs = sample.timestampMs
         }
     }
@@ -291,8 +313,8 @@ class EventDetector(
     }
 
     private fun gravityShiftDegrees(): Float {
-        val dot = gx * refGx + gy * refGy + gz * refGz
-        val m1 = sqrt(gx * gx + gy * gy + gz * gz)
+        val dot = fgx * refGx + fgy * refGy + fgz * refGz
+        val m1 = sqrt(fgx * fgx + fgy * fgy + fgz * fgz)
         val m2 = sqrt(refGx * refGx + refGy * refGy + refGz * refGz)
         if (m1 < 0.1f || m2 < 0.1f) return 0f
         val cos = (dot / (m1 * m2)).coerceIn(-1f, 1f)
@@ -329,6 +351,9 @@ class EventDetector(
         const val COOLDOWN_MS = 10_000L
         const val PROTECTED_COOLDOWN_MS = 30_000L
         const val GRAVITY_ALPHA = 0.02f
+        const val GRAVITY_ALPHA_GATED = 0.002f
+        const val GRAVITY_GATE_MPS2 = 3f
+        const val FAST_GRAVITY_ALPHA = 0.05f
         const val REF_REFRESH_MS = 5_000L
         const val SPEED_FRESH_MS = 3_000L
         const val SAMPLE_SPACING_MS = 20L

@@ -29,7 +29,9 @@ fun interface MediaProbe {
  */
 class StartupRecovery(
     private val segmentDao: SegmentDao,
-    private val locations: StorageLocations,
+    private val loopDir: File,
+    private val protectedDir: File,
+    private val quarantineDir: File,
     private val probe: MediaProbe,
     private val diagnostics: DiagnosticsLog,
 ) {
@@ -73,7 +75,7 @@ class StartupRecovery(
         }
 
         // Orphan files (no index row) in loop/ and protected/.
-        for ((dir, isProtected) in listOf(locations.loopDir to false, locations.protectedDir to true)) {
+        for ((dir, isProtected) in listOf(loopDir to false, protectedDir to true)) {
             dir.listFiles { f -> f.isFile && f.name.endsWith(".mp4") }?.forEach { file ->
                 if (file.absolutePath in knownPaths) return@forEach
                 val duration = probe.probeDurationMs(file)
@@ -110,14 +112,15 @@ class StartupRecovery(
     }
 
     private fun quarantine(file: File) {
-        val target = locations.quarantineDir.resolve(file.name)
+        quarantineDir.mkdirs()
+        val target = quarantineDir.resolve(file.name)
         val moved = file.renameTo(target)
         if (!moved) file.delete()
         diagnostics.log("Recovery", "quarantined unreadable ${file.name}")
     }
 
     private fun trimQuarantine() {
-        val files = locations.quarantineDir.listFiles()?.sortedBy { it.lastModified() } ?: return
+        val files = quarantineDir.listFiles()?.sortedBy { it.lastModified() } ?: return
         val excess = files.size - MAX_QUARANTINE_FILES
         if (excess > 0) files.take(excess).forEach { it.delete() }
         val totalBytes = files.sumOf { it.length() }

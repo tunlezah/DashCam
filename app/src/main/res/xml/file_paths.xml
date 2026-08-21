@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Only the export directory is shareable — never the raw loop/protected
+         folders. Files are shared one at a time via ACTION_SEND grants. -->
+    <external-files-path name="export" path="Movies/export/" />
+</paths>

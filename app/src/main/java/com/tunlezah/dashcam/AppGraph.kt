@@ -75,6 +75,7 @@ class AppGraph(private val context: Context) {
     val eventDetector = EventDetector()
     val eventProtector = EventProtector(database.eventDao(), storageManager, diagnostics, appScope)
     val weatherClient = WeatherClient(context, diagnostics)
+    val mapFileManager = com.tunlezah.dashcam.map.MapFileManager(context, storageLocations.baseDir, diagnostics)
 
     val orchestrator by lazy {
         RecordingOrchestrator(

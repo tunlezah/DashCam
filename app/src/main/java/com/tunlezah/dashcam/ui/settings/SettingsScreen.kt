@@ -400,6 +400,40 @@ fun SettingsScreen(onBack: () -> Unit) {
                 ) { update { s -> s.copy(mapEnabled = it) } }
             }
             item {
+                val mapFile by graph.mapFileManager.activeMapFile.collectAsStateWithLifecycle()
+                val importProgress by graph.mapFileManager.importProgress.collectAsStateWithLifecycle()
+                val mapPicker = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    if (uri != null) {
+                        scope.launch {
+                            graph.mapFileManager.importFromUri(uri, uri.lastPathSegment ?: "map.pmtiles")
+                        }
+                    }
+                }
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { mapPicker.launch(arrayOf("application/octet-stream", "*/*")) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                ) {
+                    Text("Import offline map (.pmtiles)", style = MaterialTheme.typography.bodyLarge)
+                    val progress = importProgress
+                    Text(
+                        when {
+                            progress != null && !progress.done ->
+                                "Importing… %.0f MB".format(progress.bytesCopied / 1e6)
+                            progress?.error != null -> "Import failed: ${progress.error}"
+                            mapFile != null ->
+                                "Active: ${mapFile?.name} (%.0f MB)".format((mapFile?.length() ?: 0) / 1e6)
+                            else -> "No map imported. See docs/offline-maps.md for Australian extracts."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            item {
                 SwitchRow(
                     "Weather updates",
                     "Uses the internet when available (Open-Meteo). Recording never depends on it.",

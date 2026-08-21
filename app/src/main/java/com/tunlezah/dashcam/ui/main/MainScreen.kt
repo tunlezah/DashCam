@@ -159,6 +159,28 @@ fun MainScreen(
         ) {
             SpeedPanel(gps.speedKmh, gps.quality, settings)
             storageStatus?.let { StoragePanel(it) }
+            if (settings.mapEnabled) {
+                val mapFile by graph.mapFileManager.activeMapFile.collectAsStateWithLifecycle()
+                val file = mapFile
+                if (file != null) {
+                    val dark = settings.theme != com.tunlezah.dashcam.domain.settings.AppTheme.LIGHT
+                    com.tunlezah.dashcam.map.MapPanel(
+                        mapFile = file,
+                        styleJson = remember(file, dark) { graph.mapFileManager.buildStyleJson(file, dark) },
+                        gps = gps,
+                        maxFps = settings.mapMaxFps,
+                        paused = com.tunlezah.dashcam.domain.thermal.ThermalPolicy
+                            .mitigationsFor(thermal.state).pauseMap,
+                        theme = settings.theme,
+                    )
+                } else {
+                    Text(
+                        "Map enabled but no offline map imported — add one in Settings → Map",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
 
         ControlBar(

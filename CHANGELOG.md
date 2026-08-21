@@ -1,6 +1,23 @@
 # Changelog
 
-## 1.0.1 (unreleased)
+## 1.0.2 (unreleased)
+
+Fixes from second on-device testing round.
+
+- **Preview fixed**: portrait-locked UI; the preview no longer sizes itself to
+  the full video aspect (near-full-screen) — it lives in a fixed-height box
+  and letterboxes the frame undistorted. Preview rotation is now referenced to
+  the display (like stock camera apps) instead of the gravity sensor, so
+  hand-held or flat-on-desk testing no longer produces oddly rotated previews;
+  recorded-file rotation metadata is unchanged and still gravity/mount-based.
+- **Map now follows your location**: GPS runs whenever the app is open (it
+  previously only ran while recording, so the map never centred otherwise);
+  camera-follow is driven explicitly by GPS updates; a centre marker shows the
+  vehicle and a "Waiting for GPS…" hint appears until the first fix. The
+  published map data was verified against a real decoded tile (Protomaps v4;
+  style layer/kind names match).
+
+## 1.0.1
 
 Fixes from first on-device testing.
 

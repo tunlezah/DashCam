@@ -100,6 +100,33 @@ object FrameGeometry {
      * @param stripFraction the strip thickness as a fraction of the UPRIGHT
      *   frame height (e.g. 1/12).
      */
+    /**
+     * NDC rectangle [left, bottom, right, top] that aspect-fits (letterboxes)
+     * an image of [imageWidth]×[imageHeight] into a viewport of
+     * [viewportWidth]×[viewportHeight]. Used by the preview so any box shape
+     * shows the frame undistorted.
+     */
+    fun aspectFitRectNdc(
+        imageWidth: Int,
+        imageHeight: Int,
+        viewportWidth: Int,
+        viewportHeight: Int,
+    ): FloatArray {
+        if (imageWidth <= 0 || imageHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
+            return floatArrayOf(-1f, -1f, 1f, 1f)
+        }
+        val imageAspect = imageWidth.toFloat() / imageHeight
+        val viewportAspect = viewportWidth.toFloat() / viewportHeight
+        return if (imageAspect > viewportAspect) {
+            // Image wider than viewport: pillar-to-full width, shrink height.
+            val h = viewportAspect / imageAspect
+            floatArrayOf(-1f, -h, 1f, h)
+        } else {
+            val w = imageAspect / viewportAspect
+            floatArrayOf(-w, -1f, w, 1f)
+        }
+    }
+
     fun overlayRectNdc(rotationDegrees: Int, stripFraction: Float): FloatArray {
         // The strip is stripFraction of the upright height; along whichever
         // buffer axis that maps to, the NDC thickness is 2 × stripFraction.

@@ -1,15 +1,18 @@
 package com.tunlezah.dashcam.map
 
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,13 +85,13 @@ fun MapPanel(
                         view.onResume()
                         view.setMaximumFps(maxFps)
                         view.getMapAsync { map ->
-                            mapRef = map
                             map.uiSettings.setAllGesturesEnabled(false)
                             map.uiSettings.isAttributionEnabled = true
                             map.uiSettings.isLogoEnabled = false
                             map.setStyle(
                                 org.maplibre.android.maps.Style.Builder().fromJson(styleJson)
                             )
+                            mapRef = map
                         }
                         viewRef = view
                         view
@@ -97,17 +100,43 @@ fun MapPanel(
                         android.widget.FrameLayout(ctx)
                     }
                 },
-                update = {
-                    val map = mapRef
-                    if (map != null && gps.hasFix) {
-                        map.cameraPosition = CameraPosition.Builder()
-                            .target(LatLng(gps.latitude, gps.longitude))
-                            .zoom(14.5)
-                            .bearing(0.0) // north-up: rotating dirties every tile
-                            .build()
-                    }
-                },
             )
+            // Camera follow driven explicitly by GPS updates (not by view
+            // recomposition side effects): jump-set per fix, north-up, fixed
+            // zoom — the battery playbook from the research.
+            val map = mapRef
+            LaunchedEffect(map, gps.latitude, gps.longitude, gps.hasFix) {
+                if (map != null && gps.hasFix &&
+                    !gps.latitude.isNaN() && !gps.longitude.isNaN()
+                ) {
+                    map.cameraPosition = CameraPosition.Builder()
+                        .target(LatLng(gps.latitude, gps.longitude))
+                        .zoom(14.5)
+                        .bearing(0.0) // north-up: rotating dirties every tile
+                        .build()
+                }
+            }
+            // The camera centres on the fix, so a fixed centre dot IS the
+            // vehicle marker — no LocationComponent machinery needed.
+            if (gps.hasFix) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(14.dp)
+                        .background(Color(0xFF2D9CDB), androidx.compose.foundation.shape.CircleShape)
+                        .border(2.dp, Color.White, androidx.compose.foundation.shape.CircleShape),
+                )
+            } else {
+                Text(
+                    "Waiting for GPS…",
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .background(Color(0x99000000), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                )
+            }
             DisposableEffect(Unit) {
                 onDispose {
                     runCatching {

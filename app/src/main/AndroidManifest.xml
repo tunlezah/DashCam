@@ -48,13 +48,20 @@
         android:theme="@style/Theme.DashCam"
         android:enableOnBackInvokedCallback="true">
 
+        <!-- Portrait-locked: a dashcam UI has one sensible layout, and locking
+             it removes a whole class of preview-rotation ambiguity. Recorded
+             video orientation is independent (MP4 rotation metadata from the
+             gravity-detected mount). Android 16+ may ignore the lock on large
+             screens; on phones it applies. -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:screenOrientation="portrait"
             android:showWhenLocked="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
-            android:theme="@style/Theme.DashCam">
+            android:theme="@style/Theme.DashCam"
+            tools:ignore="DiscouragedApi,LockedOrientationActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

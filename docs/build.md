@@ -20,7 +20,7 @@ Android SDK packages needed: `platforms;android-37.1`, `build-tools;36.0.0`,
 ./gradlew :app:assembleDebug          # debug APK (sideloadable)
 ./gradlew :app:testDebugUnitTest      # 79 JVM unit tests
 ./gradlew :app:lintDebug              # Android Lint
-./gradlew :app:assembleRelease        # release APK (unsigned without secrets)
+./gradlew :app:assembleRelease        # release APK (dev-signed without secrets — sideloadable)
 ./gradlew :app:connectedDebugAndroidTest   # on-device smoke tests (device required)
 ```
 
@@ -37,10 +37,21 @@ No snapshot dependencies are used.
 ## CI (GitHub Actions)
 
 `.github/workflows/build.yml` runs on every push/PR: lint → unit tests →
-debug APK → release APK → artifact upload (`dashcam-debug-apk`,
-`dashcam-release-apk`, plus lint/test reports). Download the debug APK from
-the workflow run's Artifacts section — it is signed with the standard Android
-debug key and sideloads directly.
+debug APK → release APK → signature verification (`apksigner verify`, so an
+uninstallable APK fails the build) → artifact upload (`dashcam-debug-apk`,
+`dashcam-release-apk`, plus lint/test reports).
+
+**Installing a CI artifact:** GitHub packages every artifact as a `.zip` —
+download it, **extract the `.apk` from inside**, copy that to the phone and
+open it. Installing the zip itself (or an unsigned APK) fails with
+"App not installed as package appears to be invalid".
+
+Both artifacts sideload: the debug APK (package `com.tunlezah.dashcam.debug`)
+and the release APK (package `com.tunlezah.dashcam`, minified — this is the
+one to test for real-world performance). Without release secrets the release
+APK is **development-signed with the runner's debug key**, which changes
+between CI runs — to update across builds, uninstall the old copy first
+(signature mismatch otherwise blocks the update).
 
 `.github/workflows/release.yml` runs on `v*` tags and attaches the release APK
 to a GitHub Release.
@@ -71,5 +82,7 @@ export SIGNING_KEYSTORE_PASSWORD=… SIGNING_KEY_ALIAS=… SIGNING_KEY_PASSWORD=
 Generate a keystore with:
 `keytool -genkeypair -v -keystore release.jks -keyalg RSA -keysize 4096 -validity 10000 -alias dashcam`
 
-Without secrets, `assembleRelease` produces `app-release-unsigned.apk` —
-useful for CI verification; sideload the **debug** APK for testing instead.
+Without secrets, `assembleRelease` falls back to **development-signing with
+the debug key** so the release APK always installs. Supplying your own
+keystore gives builds a stable identity (updates install over each other) and
+is required for any real distribution.

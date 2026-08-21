@@ -1,5 +1,19 @@
 # Troubleshooting
 
+## "App not installed as package appears to be invalid"
+
+Three causes, in likelihood order:
+
+1. **You installed an unsigned APK.** Builds from before the dev-signing fix
+   produced `app-release-unsigned.apk`, which Android always refuses. Use a
+   current build — both CI artifacts are now signed and verified in CI.
+2. **You installed the artifact zip.** GitHub wraps artifacts in a `.zip`:
+   extract the `.apk` from inside it first, then install that.
+3. **Signature mismatch with an already-installed copy.** Dev-signed builds
+   from different machines/CI runs carry different keys — uninstall the old
+   app (this deletes its recordings; export anything protected first), then
+   install.
+
 ## Recording stops when the screen turns off
 
 Framework support for screen-off camera recording is real (typed foreground

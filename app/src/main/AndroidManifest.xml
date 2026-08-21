@@ -65,6 +65,16 @@
             android:exported="false"
             android:foregroundServiceType="camera|location|microphone" />
 
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Battery/charging state changes are observed with context-registered
              receivers while the app or service runs; no manifest receiver is used
              (Android does not deliver ACTION_POWER_CONNECTED to manifest receivers). -->

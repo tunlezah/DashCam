@@ -80,6 +80,9 @@ data class RecorderStatus(
     val statusMessage: String = "",
     val micActive: Boolean = false,
     val storageWarning: String = "",
+    /** Encoded output dimensions (post-crop) — drives the preview aspect ratio. */
+    val outputWidth: Int = 16,
+    val outputHeight: Int = 9,
 )
 
 /**
@@ -368,7 +371,11 @@ class RecordingOrchestrator(
 
             activeProfile = profile
             applyPreviewAttachment()
-            _status.value = _status.value.copy(micActive = micActive)
+            _status.value = _status.value.copy(
+                micActive = micActive,
+                outputWidth = geometry.outputWidth,
+                outputHeight = geometry.outputHeight,
+            )
             true
         } catch (e: Exception) {
             diagnostics.log("Orchestrator", "engine start failed: ${e.message}")

@@ -19,6 +19,7 @@ import kotlin.concurrent.thread
  * Failure policy: any audio error tears down audio ONLY — video recording is
  * never interrupted by a microphone problem.
  */
+@androidx.media3.common.util.UnstableApi
 class AudioPipeline(
     private val sink: SegmentSink,
     private val diagnostics: DiagnosticsLog,

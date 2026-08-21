@@ -46,6 +46,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -91,6 +92,7 @@ data class RecorderStatus(
  * controlled recovery with bounded backoff. Runs for the lifetime of the app
  * process; the foreground service represents it to the OS.
  */
+@androidx.media3.common.util.UnstableApi
 class RecordingOrchestrator(
     private val context: Context,
     private val scope: CoroutineScope,
@@ -249,18 +251,23 @@ class RecordingOrchestrator(
     }
 
     private suspend fun stopRecordingInternal(finalState: RecorderState, reason: String) {
-        if (_status.value.state == RecorderState.COUNTDOWN) {
-            _status.value = _status.value.copy(state = RecorderState.IDLE, countdownSeconds = 0)
-            return
+        // NonCancellable: a stop may be initiated from a supervisor job that
+        // stopSupervisors() cancels — teardown must still run to completion so
+        // the in-progress segment is finalized.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+            if (_status.value.state == RecorderState.COUNTDOWN) {
+                _status.value = _status.value.copy(state = RecorderState.IDLE, countdownSeconds = 0)
+                return@withContext
+            }
+            if (!isRecording) return@withContext
+            diagnostics.log("Orchestrator", "stopping: $reason")
+            stopSupervisors()
+            engineMutex.withLock { tearDownEngine() }
+            _status.value = _status.value.copy(
+                state = finalState,
+                statusMessage = if (finalState == RecorderState.IDLE) "" else reason,
+            )
         }
-        if (!isRecording) return
-        diagnostics.log("Orchestrator", "stopping: $reason")
-        stopSupervisors()
-        engineMutex.withLock { tearDownEngine() }
-        _status.value = _status.value.copy(
-            state = finalState,
-            statusMessage = if (finalState == RecorderState.IDLE) "" else reason,
-        )
     }
 
     // ------------------------------------------------------------------
@@ -857,18 +864,17 @@ class RecordingOrchestrator(
     /** One-shot gravity sample for mount detection (median of a short burst). */
     private suspend fun sampleGravity(): Pair<Float, Float> {
         if (!accelerometerFeed.available) return 0f to 9.81f
-        val samples = ArrayList<Pair<Float, Float>>(8)
         accelerometerFeed.start()
-        try {
+        val samples = try {
             kotlinx.coroutines.withTimeoutOrNull(1000) {
-                accelerometerFeed.samples.collect {
-                    samples.add(it.x to it.y)
-                    if (samples.size >= 8) throw kotlinx.coroutines.CancellationException("done")
-                }
-            }
-        } catch (_: kotlinx.coroutines.CancellationException) {
+                val list = ArrayList<Pair<Float, Float>>(8)
+                accelerometerFeed.samples.take(8).collect { list.add(it.x to it.y) }
+                list
+            } ?: emptyList()
+        } finally {
+            // The event-detection supervisor restarts the feed if it needs it.
+            if (!settings.eventDetectionEnabled) accelerometerFeed.stop()
         }
-        // Feed stays running if event detection uses it; supervisors restart it anyway.
         if (samples.isEmpty()) return 0f to 9.81f
         val mx = samples.map { it.first }.sorted()[samples.size / 2]
         val my = samples.map { it.second }.sorted()[samples.size / 2]

@@ -1,7 +1,6 @@
 package com.tunlezah.dashcam.ui
 
 import android.Manifest
-import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -12,6 +11,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
@@ -58,10 +60,12 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun KeepScreenOn(enabled: Boolean) {
-        if (enabled) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        } else {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        androidx.compose.runtime.SideEffect {
+            if (enabled) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
         }
     }
 
@@ -72,11 +76,11 @@ class MainActivity : ComponentActivity() {
      * when the user enables audio recording in Settings (docs/privacy.md).
      */
     private fun requestCorePermissions() {
-        val wanted = buildList {
-            add(Manifest.permission.CAMERA)
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
-            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-        }.filter {
+        val wanted = listOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ).filter {
             checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
         }
         if (wanted.isNotEmpty()) {
@@ -86,15 +90,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Auto-start recording on launch when enabled (brief §5). */
+    /**
+     * Auto-start recording on launch when enabled (brief §5). Gated on the
+     * activity being RESUMED: a camera foreground service may only start while
+     * the app is genuinely in the foreground on Android 14+.
+     */
+    private var autoStartAttempted = false
+
     private fun maybeAutoStart() {
-        val g = graph
-        g.appScope.launch {
-            val settings = g.settingsRepository.current()
-            if (settings.autoStartOnLaunch && !g.orchestrator.isRecording) {
-                com.tunlezah.dashcam.recording.RecordingService.start(
-                    this@MainActivity, withMic = settings.microphoneEnabled,
-                )
+        lifecycleScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                if (!autoStartAttempted) {
+                    autoStartAttempted = true
+                    val g = graph
+                    val settings = g.settingsRepository.current()
+                    if (settings.autoStartOnLaunch && !g.orchestrator.isRecording) {
+                        com.tunlezah.dashcam.recording.RecordingService.start(
+                            this@MainActivity, withMic = settings.microphoneEnabled,
+                        )
+                    }
+                }
             }
         }
     }

@@ -53,7 +53,7 @@ class RecordingService : Service() {
             }
             ACTION_PROTECT -> {
                 orchestrator.protectNow()
-                return START_STICKY
+                return START_NOT_STICKY
             }
         }
 

@@ -114,7 +114,6 @@ class OverlayQuadProgram {
     private var uploadedVersion = -1L
     private var texWidth = 0
     private var texHeight = 0
-    private val texBuffer = FULL_QUAD_TEX.toBuffer()
 
     fun init() {
         program = linkProgram(

@@ -212,7 +212,7 @@ class GlRenderPipeline(
         val t = thread
         if (h != null) {
             val done = java.util.concurrent.CountDownLatch(1)
-            h.post {
+            val posted = h.post {
                 runCatching {
                     surfaceTexture?.setOnFrameAvailableListener(null)
                     cameraSurface?.release()
@@ -228,7 +228,7 @@ class GlRenderPipeline(
                 }
                 done.countDown()
             }
-            done.await()
+            if (posted) done.await()
         }
         t?.quitSafely()
         thread = null

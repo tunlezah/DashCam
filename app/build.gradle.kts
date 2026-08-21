@@ -78,6 +78,12 @@ android {
         warningsAsErrors = false
         abortOnError = true
         checkReleaseBuilds = false
+        // Media3's muxer API is annotated @UnstableApi and the marker
+        // propagates transitively through every consumer. This is an app (not
+        // a library); the media3 version is pinned in the version catalog, so
+        // the app-standard module-wide opt-in is used instead of annotating
+        // the entire dependency chain.
+        disable += "UnsafeOptInUsageError"
     }
 }
 

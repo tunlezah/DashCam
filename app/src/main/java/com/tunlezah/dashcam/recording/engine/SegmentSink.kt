@@ -29,6 +29,7 @@ import java.nio.ByteBuffer
  * only flushes the final fragment (small, bounded) rather than writing a moov
  * for the whole file.
  */
+@androidx.media3.common.util.UnstableApi
 class SegmentSink(
     private val diagnostics: DiagnosticsLog,
     private val syncFrameRequester: SyncFrameRequester,
@@ -100,9 +101,23 @@ class SegmentSink(
         }
     }
 
+    /**
+     * Camera frame timestamps are not guaranteed to share CLOCK_MONOTONIC with
+     * the audio pipeline (SENSOR_INFO_TIMESTAMP_SOURCE may be UNKNOWN on
+     * budget devices). This EMA offset maps monotonic-clock audio PTS into the
+     * video timebase; jitter is ≤ one frame interval, well under lip-sync
+     * perception thresholds.
+     */
+    @Volatile
+    private var videoMinusMonotonicUs = Long.MIN_VALUE
+
     fun writeVideoSample(buffer: ByteBuffer, info: MediaCodec.BufferInfo) {
         synchronized(lock) {
             val isKeyFrame = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
+            val nowUs = System.nanoTime() / 1000
+            val offset = info.presentationTimeUs - nowUs
+            videoMinusMonotonicUs = if (videoMinusMonotonicUs == Long.MIN_VALUE) offset
+            else (videoMinusMonotonicUs * 7 + offset) / 8
 
             if (muxer == null) {
                 // First segment (or restart after starvation) begins on a keyframe.
@@ -142,8 +157,13 @@ class SegmentSink(
         synchronized(lock) {
             val m = muxer ?: return
             if (audioTrackId < 0) return
-            val pts = info.presentationTimeUs - segmentStartPtsUs
+            if (videoMinusMonotonicUs == Long.MIN_VALUE) return
+            // Audio PTS are CLOCK_MONOTONIC; map into the video timebase first.
+            var pts = info.presentationTimeUs + videoMinusMonotonicUs - segmentStartPtsUs
             if (pts < 0) return // audio predating this segment's first video frame
+            // Keep the track strictly monotonic despite EMA jitter.
+            if (pts <= lastAudioPtsUs) pts = lastAudioPtsUs + 1
+            lastAudioPtsUs = pts
             try {
                 m.writeSampleData(audioTrackId, buffer, BufferInfo(pts, info.size, info.flags))
             } catch (e: Exception) {
@@ -160,6 +180,7 @@ class SegmentSink(
     }
 
     private var lastVideoPtsUs = 0L
+    private var lastAudioPtsUs = -1L
 
     private fun shouldRotate(ptsUs: Long): Boolean {
         lastVideoPtsUs = ptsUs
@@ -181,7 +202,7 @@ class SegmentSink(
         starvedReported = false
         return try {
             val out = FileOutputStream(file)
-            val m = FragmentedMp4Muxer.Builder(out)
+            val m = FragmentedMp4Muxer.Builder(out.channel)
                 .setFragmentDurationMs(FRAGMENT_DURATION_MS)
                 .build()
             location?.let { (lat, lon) ->
@@ -197,6 +218,7 @@ class SegmentSink(
             currentFile = file
             segmentStartWallMs = startWallMs
             segmentStartPtsUs = firstPtsUs
+            lastAudioPtsUs = -1
             syncRequested = false
             listener.onSegmentStarted(file, startWallMs)
             true

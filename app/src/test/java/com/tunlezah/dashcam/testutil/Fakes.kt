@@ -52,8 +52,10 @@ open class FakeSegmentDao : SegmentDao {
         rows.value.filter { it.protected }.sumOf { it.sizeBytes }
 
     override suspend fun overlapping(fromMs: Long, toMs: Long): List<SegmentEntity> =
-        rows.value.filter { it.startWallMs <= toMs && (it.endWallMs == null || it.endWallMs!! >= fromMs) }
-            .sortedBy { it.startWallMs }
+        rows.value.filter { row ->
+            val end = row.endWallMs
+            row.startWallMs <= toMs && (end == null || end >= fromMs)
+        }.sortedBy { it.startWallMs }
 
     override suspend fun protect(ids: List<Long>, eventId: Long) {
         rows.value = rows.value.map {

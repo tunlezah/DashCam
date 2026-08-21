@@ -83,7 +83,7 @@ fun LibraryScreen(onBack: () -> Unit, onPlay: (Long) -> Unit) {
         Column(Modifier
             .fillMaxSize()
             .padding(padding)) {
-            TabRow(selectedTabIndex = tab) {
+            androidx.compose.material3.PrimaryTabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("All") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Protected") })
             }

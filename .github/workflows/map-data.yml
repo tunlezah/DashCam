@@ -52,7 +52,9 @@ jobs:
           extract au-all     "112.5,-44.2,154.1,-9.0"   12
           ls -lah out/
           # Sanity: every archive must be readable by the pmtiles CLI.
-          for f in out/*.pmtiles; do ./pmtiles show "$f" | head -3; done
+          # (No `| head` here: under pipefail, head closing the pipe makes
+          # pmtiles exit with SIGPIPE/141 and fails the job.)
+          for f in out/*.pmtiles; do ./pmtiles show "$f" > /dev/null; done
 
       - name: Publish to the map-data-v1 release (stable asset URLs)
         uses: softprops/action-gh-release@v2

@@ -48,7 +48,7 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --no-daemon
 
-      - name: Build release APK (unsigned unless signing secrets provided)
+      - name: Build release APK (dev-signed unless signing secrets provided)
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
           SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
@@ -61,12 +61,16 @@ jobs:
           fi
           ./gradlew :app:assembleRelease --no-daemon
 
-      - name: Verify APKs exist
+      - name: Verify APKs exist and are signed (installable)
         run: |
           set -e
-          ls -la app/build/outputs/apk/debug/
+          ls -la app/build/outputs/apk/debug/ app/build/outputs/apk/release/
           test -f app/build/outputs/apk/debug/app-debug.apk
-          ls -la app/build/outputs/apk/release/
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify app/build/outputs/apk/debug/app-debug.apk
+          for apk in app/build/outputs/apk/release/*.apk; do
+            "$APKSIGNER" verify "$apk"
+          done
         shell: bash
 
       - name: Upload debug APK

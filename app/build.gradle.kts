@@ -24,9 +24,13 @@ android {
         }
     }
 
-    // Release signing is optional: configured entirely from environment variables
-    // (CI secrets) so no key material ever lives in the repository. Without the
-    // variables, assembleRelease produces an unsigned APK. See docs/build.md.
+    // Release signing is configured entirely from environment variables (CI
+    // secrets) so no key material ever lives in the repository. Without the
+    // variables, the release build falls back to the local debug key: Android
+    // refuses to install unsigned APKs ("package appears to be invalid"), so a
+    // development-signed release APK is the honest sideloadable default. The
+    // debug key differs per machine/CI-runner — updating across differently-
+    // signed builds requires uninstalling first. See docs/build.md.
     val signingKeystoreFile = System.getenv("SIGNING_KEYSTORE_FILE")
     if (!signingKeystoreFile.isNullOrBlank()) {
         signingConfigs {
@@ -47,8 +51,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (!signingKeystoreFile.isNullOrBlank()) {
-                signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (!signingKeystoreFile.isNullOrBlank()) {
+                signingConfigs.getByName("release")
+            } else {
+                println("No release keystore configured — development-signing the release APK with the debug key (sideloadable).")
+                signingConfigs.getByName("debug")
             }
         }
         debug {

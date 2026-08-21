@@ -213,20 +213,32 @@ HALs that stop capture on screen-off and falls back to the "screen on, dimmed bl
 overlay" mode with an explanation (see research §10 — OEM behaviour varies and is
 not claimed to work universally).
 
-## 11. Orientation strategy (portrait mount)
+## 11. Orientation strategy (reworked after on-device testing)
 
-Physics first: with the phone portrait, the sensor's wide axis is vertical — no
-software recovers horizontal FOV. Design (full analysis in
-`docs/research/orientation-analysis.md` section of architecture docs):
+The original design rotated and optionally cropped frames in the GL stage.
+On-device testing showed it produced wrongly-oriented output (a render-
+transform sign error — exactly the class of bug that motivated the rework),
+so orientation now works the way every stock camera app does:
 
-- Mount orientation detected from the accelerometer gravity vector (no gyro needed).
-- **Landscape mount (recommended, stated in onboarding):** native 16:9 landscape
-  recording — full horizontal FOV, standard dashcam output.
-- **Portrait mount:** default output is a **16:9 landscape crop** of the portrait
-  frame (the evidence-relevant horizontal band; conventional playback; smaller
-  files), with a vertical aim adjustment. A "full portrait frame" option records
-  9:16 for maximum vertical coverage. Both produce upright, rotation-correct files
-  (orientation applied in GL, no reliance on rotation metadata).
+- **Frames are recorded sensor-native** — the encoder receives the camera
+  buffer untouched: no pixel rotation, no cropping, full field of view,
+  "what the camera sees is what is recorded".
+- **Upright display comes from standard MP4 rotation metadata**
+  (`Mp4OrientationData`), computed with the documented Camera2
+  relative-rotation formula from the sensor orientation plus the mount
+  rotation (accelerometer gravity — reliable with the screen off, unlike
+  Display rotation). Every mainstream player applies it; exports preserve it
+  (`MediaMuxer.setOrientationHint`).
+- The only orientation-sensitive *rendering* left is cosmetic and unit-tested
+  by corner-mapping assertions: the preview rotation matrix, and the burned-in
+  overlay strip, which is drawn pre-rotated in buffer space onto whichever
+  buffer edge becomes the display bottom.
+- A rendering bug can therefore never ruin a recording again — worst case is a
+  cosmetic preview/overlay artefact while the video itself remains correct.
+
+Physics note (still true, now documentation rather than a crop feature): a
+portrait-mounted phone's horizontal field of view is the lens's short axis;
+landscape mounting maximises road coverage.
 
 ## 12. Threading model
 

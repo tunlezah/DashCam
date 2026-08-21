@@ -82,6 +82,12 @@ class SegmentExporter(
                 if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
                     maxBuffer = maxOf(maxBuffer, format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
                 }
+                // Recordings are sensor-native with display-rotation metadata —
+                // the exported classic MP4 must carry the same rotation or it
+                // plays sideways.
+                if (format.containsKey(MediaFormat.KEY_ROTATION)) {
+                    m.setOrientationHint(format.getInteger(MediaFormat.KEY_ROTATION))
+                }
                 extractor.selectTrack(i)
             }
             m.start()

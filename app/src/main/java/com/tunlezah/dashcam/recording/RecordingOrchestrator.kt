@@ -282,23 +282,18 @@ class RecordingOrchestrator(
             return false
         }
 
-        // Mount orientation from gravity (docs/architecture.md §11).
+        // Mount orientation from gravity → MP4 rotation metadata. Frames are
+        // recorded sensor-native; players rotate at display time
+        // (docs/architecture.md §11 — reworked after on-device feedback).
         val gravity = sampleGravity()
         val mountRotation = FrameGeometry.mountRotationFromGravity(gravity.first, gravity.second)
         val bufferRotation = FrameGeometry.bufferRotationDegrees(
             cameraCaps.sensorOrientationDegrees, mountRotation, facingFront = !facingBack,
         )
-        val cropPortrait = s.portraitCaptureMode ==
-            com.tunlezah.dashcam.domain.settings.PortraitCaptureMode.CROP_16_9
-        val geometry = FrameGeometry.solve(
-            streamWidth = profile.width,
-            streamHeight = profile.height,
-            rotationDegrees = bufferRotation,
-            cropTo16x9Landscape = cropPortrait,
-        )
         diagnostics.log(
             "Orchestrator",
-            "mount=$mountRotation° buffer=${bufferRotation}° output=${geometry.outputWidth}x${geometry.outputHeight}",
+            "mount=$mountRotation° rotation metadata=${bufferRotation}° " +
+                "(sensor=${cameraCaps.sensorOrientationDegrees}°), recording ${profile.width}x${profile.height} native",
         )
 
         // Storage: pre-approve the first segment before opening hardware.
@@ -314,14 +309,14 @@ class RecordingOrchestrator(
             val enc = VideoEncoderCore(diagnostics)
             enc.configure(
                 mimeType = profile.codec.mimeType,
-                width = geometry.outputWidth,
-                height = geometry.outputHeight,
+                width = profile.width,
+                height = profile.height,
                 fps = profile.fps,
                 bitrateBps = profile.bitrateBps,
             )
             encoder = enc
 
-            val overlay = OverlayRenderer(geometry.outputWidth, geometry.outputHeight)
+            val overlay = OverlayRenderer(profile.width, profile.height, bufferRotation)
             overlayRenderer = overlay
 
             val segmentSink = SegmentSink(
@@ -330,15 +325,15 @@ class RecordingOrchestrator(
                 planner = { startWallMs -> takePlannedFile(startWallMs) },
                 listener = sinkListener,
             )
-            segmentSink.configure(s.segmentMinutes, s.gpsEmbedInVideoMetadata)
+            segmentSink.configure(s.segmentMinutes, s.gpsEmbedInVideoMetadata, bufferRotation)
             sink = segmentSink
 
             val gl = GlRenderPipeline(diagnostics)
             gl.start(
                 encoderSurface = requireNotNull(enc.inputSurface),
-                streamWidth = profile.width,
-                streamHeight = profile.height,
-                outputGeometry = geometry,
+                width = profile.width,
+                height = profile.height,
+                rotation = bufferRotation,
                 burnIn = s.overlayMode == OverlayMode.STAMP && overlay.anyEnabled(s),
                 overlays = overlay,
             )
@@ -380,8 +375,9 @@ class RecordingOrchestrator(
             applyPreviewAttachment()
             _status.value = _status.value.copy(
                 micActive = micActive,
-                outputWidth = geometry.outputWidth,
-                outputHeight = geometry.outputHeight,
+                // Upright display dimensions — drive the preview aspect ratio.
+                outputWidth = FrameGeometry.uprightWidth(profile.width, profile.height, bufferRotation),
+                outputHeight = FrameGeometry.uprightHeight(profile.width, profile.height, bufferRotation),
             )
             true
         } catch (e: Exception) {

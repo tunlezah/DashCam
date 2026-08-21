@@ -1,8 +1,12 @@
 package com.tunlezah.dashcam.recording.engine
 
+import android.opengl.Matrix
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class FrameGeometryTest {
 
     // ------------- mount rotation from gravity -------------
@@ -27,10 +31,10 @@ class FrameGeometryTest {
         assertThat(FrameGeometry.mountRotationFromGravity(-9.6f, 0.5f)).isEqualTo(270)
     }
 
-    // ------------- buffer rotation -------------
+    // ------------- rotation metadata (Camera2 relative-rotation formula) -------------
 
     @Test
-    fun `back camera portrait needs 90 degree rotation (sensor orientation 90)`() {
+    fun `back camera portrait needs 90 degree metadata (sensor orientation 90)`() {
         assertThat(FrameGeometry.bufferRotationDegrees(90, 0, facingFront = false)).isEqualTo(90)
     }
 
@@ -49,46 +53,102 @@ class FrameGeometryTest {
         assertThat(FrameGeometry.bufferRotationDegrees(270, 0, facingFront = true)).isEqualTo(270)
     }
 
-    // ------------- output geometry -------------
+    // ------------- upright display dimensions -------------
 
     @Test
-    fun `landscape mount records the native landscape stream`() {
-        val g = FrameGeometry.solve(1920, 1080, rotationDegrees = 0, cropTo16x9Landscape = true)
-        assertThat(g.outputWidth).isEqualTo(1920)
-        assertThat(g.outputHeight).isEqualTo(1080)
-        assertThat(g.cropTop).isEqualTo(0f)
-        assertThat(g.cropBottom).isEqualTo(1f)
+    fun `upright dims swap only for sideways rotations`() {
+        assertThat(FrameGeometry.uprightWidth(1920, 1080, 0)).isEqualTo(1920)
+        assertThat(FrameGeometry.uprightHeight(1920, 1080, 0)).isEqualTo(1080)
+        assertThat(FrameGeometry.uprightWidth(1920, 1080, 90)).isEqualTo(1080)
+        assertThat(FrameGeometry.uprightHeight(1920, 1080, 90)).isEqualTo(1920)
+        assertThat(FrameGeometry.uprightWidth(1920, 1080, 180)).isEqualTo(1920)
+        assertThat(FrameGeometry.uprightWidth(1920, 1080, 270)).isEqualTo(1080)
+    }
+
+    // ------------- texture matrices -------------
+
+    private fun identity(): FloatArray = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
+
+    private fun apply(m: FloatArray, s: Float, t: Float): Pair<Float, Float> {
+        val v = floatArrayOf(s, t, 0f, 1f)
+        val out = FloatArray(4)
+        Matrix.multiplyMV(out, 0, m, 0, v, 0)
+        return out[0] to out[1]
     }
 
     @Test
-    fun `portrait mount with 16x9 crop produces a landscape band`() {
-        val g = FrameGeometry.solve(1920, 1080, rotationDegrees = 90, cropTo16x9Landscape = true)
-        // Upright image is 1080×1920; the 16:9 band is 1080 wide.
-        assertThat(g.outputWidth).isEqualTo(1080)
-        assertThat(g.outputHeight).isEqualTo(606) // 1080*9/16 = 607 → align2 → 606
-        assertThat(g.cropBottom - g.cropTop).isWithin(0.01f).of(607f / 1920f)
-        // Band sits slightly above centre (sky bias), never out of range.
-        assertThat(g.cropTop).isAtLeast(0f)
-        assertThat(g.cropBottom).isAtMost(1f)
-        assertThat(g.cropTop).isLessThan(0.5f - (607f / 1920f) / 2f + 0.001f)
+    fun `encoder matrix is the surface-texture transform untouched`() {
+        val st = identity()
+        val m = FrameGeometry.encoderTexMatrix(st)
+        assertThat(m.toList()).isEqualTo(st.toList())
     }
 
+    /**
+     * "Display = buffer rotated 90° clockwise" corner mapping in texture space
+     * (origin bottom-left): display(0,0) samples buffer(1,0); display(1,0) →
+     * buffer(1,1); display(0,1) → buffer(0,0); display(1,1) → buffer(0,1).
+     * I.e. (s,t) → (1−t, s).
+     */
     @Test
-    fun `portrait mount full frame keeps the whole portrait image`() {
-        val g = FrameGeometry.solve(1920, 1080, rotationDegrees = 90, cropTo16x9Landscape = false)
-        assertThat(g.outputWidth).isEqualTo(1080)
-        assertThat(g.outputHeight).isEqualTo(1920)
-        assertThat(g.cropTop).isEqualTo(0f)
-    }
-
-    @Test
-    fun `output dimensions are always even`() {
-        for (rotation in listOf(0, 90, 180, 270)) {
-            for (crop in listOf(true, false)) {
-                val g = FrameGeometry.solve(1919, 1079, rotation, crop)
-                assertThat(g.outputWidth % 2).isEqualTo(0)
-                assertThat(g.outputHeight % 2).isEqualTo(0)
-            }
+    fun `preview matrix for 90 maps corners like a player rotating clockwise`() {
+        val m = FrameGeometry.previewTexMatrix(identity(), 90)
+        val tolerance = 1e-4f
+        for ((input, expected) in listOf(
+            (0f to 0f) to (1f to 0f),
+            (1f to 0f) to (1f to 1f),
+            (0f to 1f) to (0f to 0f),
+            (1f to 1f) to (0f to 1f),
+        )) {
+            val (s, t) = apply(m, input.first, input.second)
+            assertThat(s).isWithin(tolerance).of(expected.first)
+            assertThat(t).isWithin(tolerance).of(expected.second)
         }
+    }
+
+    @Test
+    fun `preview matrix for 180 maps corners to their opposites`() {
+        val m = FrameGeometry.previewTexMatrix(identity(), 180)
+        val (s, t) = apply(m, 0f, 0f)
+        assertThat(s).isWithin(1e-4f).of(1f)
+        assertThat(t).isWithin(1e-4f).of(1f)
+    }
+
+    @Test
+    fun `preview matrix for 270 is the inverse of 90`() {
+        val m90 = FrameGeometry.previewTexMatrix(identity(), 90)
+        val m270 = FrameGeometry.previewTexMatrix(identity(), 270)
+        // 270 applied after 90 should be identity on any point.
+        val (s1, t1) = apply(m90, 0.25f, 0.75f)
+        val (s2, t2) = apply(m270, s1, t1)
+        assertThat(s2).isWithin(1e-4f).of(0.25f)
+        assertThat(t2).isWithin(1e-4f).of(0.75f)
+    }
+
+    @Test
+    fun `preview matrix for 0 is a passthrough`() {
+        val m = FrameGeometry.previewTexMatrix(identity(), 0)
+        val (s, t) = apply(m, 0.3f, 0.7f)
+        assertThat(s).isWithin(1e-4f).of(0.3f)
+        assertThat(t).isWithin(1e-4f).of(0.7f)
+    }
+
+    // ------------- overlay placement in buffer space -------------
+
+    @Test
+    fun `overlay strip sits on the edge that becomes the display bottom`() {
+        val f = 1f / 12f
+        val t = 2f * f
+        // θ=0: bottom edge of the buffer.
+        assertThat(FrameGeometry.overlayRectNdc(0, f).toList())
+            .isEqualTo(listOf(-1f, -1f, 1f, -1f + t))
+        // θ=90 (portrait mount, back camera): right edge, vertical.
+        assertThat(FrameGeometry.overlayRectNdc(90, f).toList())
+            .isEqualTo(listOf(1f - t, -1f, 1f, 1f))
+        // θ=180: top edge.
+        assertThat(FrameGeometry.overlayRectNdc(180, f).toList())
+            .isEqualTo(listOf(-1f, 1f - t, 1f, 1f))
+        // θ=270: left edge, vertical.
+        assertThat(FrameGeometry.overlayRectNdc(270, f).toList())
+            .isEqualTo(listOf(-1f, -1f, -1f + t, 1f))
     }
 }

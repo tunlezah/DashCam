@@ -8,6 +8,7 @@ import android.graphics.Typeface
 import com.tunlezah.dashcam.domain.location.GpsFixQuality
 import com.tunlezah.dashcam.domain.location.GpsState
 import com.tunlezah.dashcam.domain.settings.DashcamSettings
+import com.tunlezah.dashcam.recording.engine.FrameGeometry
 import com.tunlezah.dashcam.recording.engine.GlRenderPipeline
 import com.tunlezah.dashcam.weather.WeatherInfo
 import java.text.SimpleDateFormat
@@ -16,23 +17,43 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Renders the overlay strip stamped into the video (and mirrored on the
- * preview). A translucent bar across the bottom of the frame carrying, per
- * user toggles: date, time, speed (km/h), GPS coordinates, weather, custom
- * label — matching hardware-dashcam conventions.
+ * Renders the overlay strip stamped into the video: a translucent bar
+ * carrying, per user toggles, date, time, speed (km/h), GPS coordinates,
+ * weather and a custom label.
  *
- * Performance contract: [refresh] is called at most once per second from the
- * orchestrator (never per frame); the GL stage re-uploads only when [version]
- * changes. The strip is 1/12 of frame height, so at 1080p it's a 1920×90
- * ARGB bitmap — a ~0.7 MB upload per second, negligible.
+ * Because recorded frames are the RAW camera buffer with upright display
+ * achieved via MP4 rotation metadata (see FrameGeometry), the strip is drawn
+ * pre-rotated in buffer space: a canvas transform places upright-strip
+ * coordinates (u,v) onto the buffer edge that becomes the bottom of the
+ * displayed video after the player applies the rotation. Mappings
+ * (pixel-derived, y-down coordinates; W×H = buffer dims, h = strip px):
+ *
+ *   θ=0:   identity, bottom edge (bitmap W×h)
+ *   θ=90:  (u,v) → (v, H−u), right-edge vertical bitmap h×H
+ *   θ=180: (u,v) → (W−u, h−v), top edge (bitmap W×h)
+ *   θ=270: (u,v) → (h−v, u), left-edge vertical bitmap h×H
+ *
+ * Performance contract unchanged: [refresh] runs at most once per second; the
+ * GL stage re-uploads only when [version] changes.
  */
 class OverlayRenderer(
-    private val outputWidth: Int,
-    private val outputHeight: Int,
+    private val bufferWidth: Int,
+    private val bufferHeight: Int,
+    private val rotationDegrees: Int,
 ) : GlRenderPipeline.OverlaySource {
 
-    private val stripHeight = (outputHeight / 12).coerceAtLeast(48)
-    private val bitmap: Bitmap = Bitmap.createBitmap(outputWidth, stripHeight, Bitmap.Config.ARGB_8888)
+    private val uprightWidth = FrameGeometry.uprightWidth(bufferWidth, bufferHeight, rotationDegrees)
+    private val uprightHeight = FrameGeometry.uprightHeight(bufferWidth, bufferHeight, rotationDegrees)
+
+    /** Strip thickness in upright pixels. */
+    private val stripHeight = (uprightHeight / 12).coerceAtLeast(48)
+
+    private val sideways = rotationDegrees % 180 != 0
+    private val bitmap: Bitmap = if (sideways) {
+        Bitmap.createBitmap(stripHeight, bufferHeight, Bitmap.Config.ARGB_8888)
+    } else {
+        Bitmap.createBitmap(bufferWidth, stripHeight, Bitmap.Config.ARGB_8888)
+    }
     private val canvas = Canvas(bitmap)
 
     @Volatile
@@ -57,7 +78,35 @@ class OverlayRenderer(
         nowMs: Long = System.currentTimeMillis(),
     ) {
         canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        canvas.drawRect(0f, 0f, outputWidth.toFloat(), stripHeight.toFloat(), bgPaint)
+        canvas.save()
+        // Map upright-strip coordinates onto the buffer-space bitmap.
+        when (((rotationDegrees % 360) + 360) % 360) {
+            90 -> {
+                canvas.translate(0f, bufferHeight.toFloat())
+                canvas.rotate(-90f)
+            }
+            180 -> {
+                canvas.translate(bufferWidth.toFloat(), stripHeight.toFloat())
+                canvas.rotate(180f)
+            }
+            270 -> {
+                canvas.translate(stripHeight.toFloat(), 0f)
+                canvas.rotate(90f)
+            }
+        }
+        drawUprightStrip(settings, gps, weather, nowMs)
+        canvas.restore()
+        version++
+    }
+
+    /** Draws the strip in upright coordinates: width [uprightWidth], height [stripHeight]. */
+    private fun drawUprightStrip(
+        settings: DashcamSettings,
+        gps: GpsState,
+        weather: WeatherInfo?,
+        nowMs: Long,
+    ) {
+        canvas.drawRect(0f, 0f, uprightWidth.toFloat(), stripHeight.toFloat(), bgPaint)
 
         val baseline = stripHeight * 0.68f
         val pad = stripHeight * 0.3f
@@ -88,8 +137,8 @@ class OverlayRenderer(
             canvas.drawText(midParts.joinToString("  "), x, baseline, textPaint)
         }
 
-        // Right side: speed (km/h). Honest about GPS state: shows "--" without a
-        // fix and marks poor accuracy with '~' rather than inventing precision.
+        // Right side: speed (km/h). Honest about GPS state: "--" without a fix,
+        // '~' marks poor accuracy rather than inventing precision.
         if (settings.overlaySpeed) {
             val speedText = when {
                 !settings.gpsEnabled || gps.quality == GpsFixQuality.NO_PERMISSION -> ""
@@ -99,11 +148,9 @@ class OverlayRenderer(
             }
             if (speedText.isNotEmpty()) {
                 val w = speedPaint.measureText(speedText)
-                canvas.drawText(speedText, outputWidth - w - pad, baseline, speedPaint)
+                canvas.drawText(speedText, uprightWidth - w - pad, baseline, speedPaint)
             }
         }
-
-        version++
     }
 
     /** True when at least one overlay element is enabled. */
@@ -114,10 +161,6 @@ class OverlayRenderer(
     override fun currentOverlay(): Pair<Bitmap, Long>? =
         if (version == 0L) null else bitmap to version
 
-    override fun overlayRect(): FloatArray {
-        // Bottom strip in normalized device coordinates: full width, height 1/6
-        // of clip space (= 1/12 of frame height since NDC spans 2).
-        val h = 2f * stripHeight / outputHeight
-        return floatArrayOf(-1f, -1f, 1f, -1f + h)
-    }
+    override fun overlayRect(): FloatArray =
+        FrameGeometry.overlayRectNdc(rotationDegrees, stripHeight.toFloat() / uprightHeight)
 }

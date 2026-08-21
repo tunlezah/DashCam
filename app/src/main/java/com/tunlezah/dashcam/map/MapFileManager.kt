@@ -11,9 +11,11 @@ import java.io.File
 
 /**
  * Manages offline map data (docs/offline-maps.md). The app ships with no map
- * data; the user imports a PMTiles extract (e.g. their Australian state,
- * ~150–550 MB) via the system file picker. Everything renders fully offline
- * afterwards.
+ * data (it would add hundreds of MB to the APK); instead the user downloads
+ * their Australian region in-app from [MapRegionCatalog] — one tap, with
+ * progress — or imports any PMTiles extract via the system file picker.
+ * Everything renders fully offline afterwards; nothing else ever touches the
+ * network.
  */
 class MapFileManager(
     private val context: Context,
@@ -26,14 +28,96 @@ class MapFileManager(
     private val _activeMapFile = MutableStateFlow(findMapFile())
     val activeMapFile: StateFlow<File?> = _activeMapFile
 
-    data class ImportProgress(val bytesCopied: Long, val totalBytes: Long, val done: Boolean, val error: String?)
+    data class ImportProgress(
+        val label: String,
+        val bytesCopied: Long,
+        val totalBytes: Long,
+        val done: Boolean,
+        val error: String?,
+    )
 
     private val _importProgress = MutableStateFlow<ImportProgress?>(null)
     val importProgress: StateFlow<ImportProgress?> = _importProgress
 
+    @Volatile
+    private var cancelRequested = false
+
+    @Volatile
+    var transferActive = false
+        private set
+
     fun findMapFile(): File? =
         mapsDir.listFiles { f -> f.isFile && f.name.endsWith(".pmtiles") }
-            ?.maxByOrNull { it.length() }
+            ?.maxByOrNull { it.lastModified() }
+
+    fun cancelTransfer() {
+        cancelRequested = true
+    }
+
+    /**
+     * Downloads a built-in region into the maps directory. Explicitly
+     * user-initiated; streams to a .part file (atomic rename on completion) so
+     * an interrupted download never masquerades as a usable map. This is the
+     * only network download in the app besides optional weather.
+     */
+    suspend fun downloadRegion(region: MapRegion) = withContext(Dispatchers.IO) {
+        if (transferActive) return@withContext
+        transferActive = true
+        cancelRequested = false
+        val dest = File(mapsDir, "${region.id}.pmtiles")
+        val tmp = File(mapsDir, "${region.id}.pmtiles.part")
+        try {
+            val connection = java.net.URL(region.url).openConnection() as java.net.HttpURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 30_000
+            connection.instanceFollowRedirects = true
+            try {
+                check(connection.responseCode in 200..299) {
+                    "server returned HTTP ${connection.responseCode} — has the map-data release been published?"
+                }
+                val total = connection.contentLengthLong
+                var copied = 0L
+                connection.inputStream.use { input ->
+                    tmp.outputStream().use { output ->
+                        val buffer = ByteArray(1 shl 16)
+                        var lastPublish = 0L
+                        while (true) {
+                            if (cancelRequested) throw InterruptedException("cancelled")
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            copied += read
+                            if (copied - lastPublish > 512 * 1024) {
+                                lastPublish = copied
+                                _importProgress.value =
+                                    ImportProgress(region.label, copied, total, done = false, error = null)
+                            }
+                        }
+                        output.fd.sync()
+                    }
+                }
+                check(total <= 0 || copied == total) { "download incomplete ($copied of $total bytes)" }
+                check(tmp.renameTo(dest)) { "rename failed" }
+                // One region at a time: reclaim the space of any previous map.
+                mapsDir.listFiles { f -> f.name.endsWith(".pmtiles") && f != dest }?.forEach { it.delete() }
+                _importProgress.value = ImportProgress(region.label, copied, total, done = true, error = null)
+                _activeMapFile.value = findMapFile()
+                diagnostics.log("Map", "downloaded ${region.id} (${copied / 1024 / 1024} MB)")
+            } finally {
+                connection.disconnect()
+            }
+        } catch (e: InterruptedException) {
+            tmp.delete()
+            _importProgress.value = ImportProgress(region.label, 0, 0, done = true, error = "cancelled")
+            diagnostics.log("Map", "download cancelled: ${region.id}")
+        } catch (e: Exception) {
+            tmp.delete()
+            _importProgress.value = ImportProgress(region.label, 0, 0, done = true, error = e.message)
+            diagnostics.log("Map", "download failed: ${e.message}")
+        } finally {
+            transferActive = false
+        }
+    }
 
     /** Copies a user-picked .pmtiles document into the maps directory. */
     suspend fun importFromUri(uri: Uri, displayName: String) = withContext(Dispatchers.IO) {
@@ -52,18 +136,18 @@ class MapFileManager(
                         if (read < 0) break
                         output.write(buffer, 0, read)
                         copied += read
-                        _importProgress.value = ImportProgress(copied, total, done = false, error = null)
+                        _importProgress.value = ImportProgress(safeName, copied, total, done = false, error = null)
                     }
                     output.fd.sync()
                 }
             } ?: throw IllegalStateException("could not open selected file")
             check(tmp.renameTo(dest)) { "rename failed" }
-            _importProgress.value = ImportProgress(copied, total, done = true, error = null)
+            _importProgress.value = ImportProgress(safeName, copied, total, done = true, error = null)
             _activeMapFile.value = findMapFile()
             diagnostics.log("Map", "imported $safeName (${copied / 1024 / 1024} MB)")
         } catch (e: Exception) {
             tmp.delete()
-            _importProgress.value = ImportProgress(0, 0, done = true, error = e.message)
+            _importProgress.value = ImportProgress(safeName, 0, 0, done = true, error = e.message)
             diagnostics.log("Map", "import failed: ${e.message}")
         }
     }

@@ -53,6 +53,11 @@ class OesTextureProgram {
     private val posBuffer = FULL_QUAD_POS.toBuffer()
     private val texBuffer = FULL_QUAD_TEX.toBuffer()
 
+    // Reusable buffer for letterboxed (aspect-fit) draws — avoids per-frame allocation.
+    private val fitPosBuffer = java.nio.ByteBuffer.allocateDirect(8 * 4)
+        .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
+    private val lastFitRect = FloatArray(4) { Float.NaN }
+
     fun init() {
         program = linkProgram(
             """
@@ -80,13 +85,35 @@ class OesTextureProgram {
         uTexMatrix = GLES20.glGetUniformLocation(program, "uTexMatrix")
     }
 
-    fun draw(oesTextureId: Int, texMatrix: FloatArray) {
+    fun draw(oesTextureId: Int, texMatrix: FloatArray) =
+        drawInternal(oesTextureId, texMatrix, posBuffer)
+
+    /**
+     * Draws into the NDC rectangle [left, bottom, right, top] instead of the
+     * full viewport — used by the preview to aspect-fit (letterbox) rather
+     * than stretch. Caller clears the viewport first.
+     */
+    fun drawFit(oesTextureId: Int, texMatrix: FloatArray, rect: FloatArray) {
+        if (!rect.contentEquals(lastFitRect)) {
+            rect.copyInto(lastFitRect)
+            fitPosBuffer.clear()
+            fitPosBuffer.put(
+                floatArrayOf(
+                    rect[0], rect[1], rect[2], rect[1], rect[0], rect[3], rect[2], rect[3],
+                )
+            )
+        }
+        fitPosBuffer.position(0)
+        drawInternal(oesTextureId, texMatrix, fitPosBuffer)
+    }
+
+    private fun drawInternal(oesTextureId: Int, texMatrix: FloatArray, positions: FloatBuffer) {
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTextureId)
         GLES20.glUniformMatrix4fv(uTexMatrix, 1, false, texMatrix, 0)
         GLES20.glEnableVertexAttribArray(aPosition)
-        GLES20.glVertexAttribPointer(aPosition, 2, GLES20.GL_FLOAT, false, 0, posBuffer)
+        GLES20.glVertexAttribPointer(aPosition, 2, GLES20.GL_FLOAT, false, 0, positions)
         GLES20.glEnableVertexAttribArray(aTexCoord)
         GLES20.glVertexAttribPointer(aTexCoord, 2, GLES20.GL_FLOAT, false, 0, texBuffer)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)

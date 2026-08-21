@@ -50,7 +50,17 @@ class GlRenderPipeline(
 
     private var streamWidth = 0
     private var streamHeight = 0
-    private var rotationDegrees = 0
+
+    /** MP4 metadata rotation — decides overlay placement (buffer space). */
+    private var metadataRotationDegrees = 0
+
+    /**
+     * Preview rotation relative to the (portrait-locked) DISPLAY — deliberately
+     * independent of the gravity-based metadata rotation: the preview must
+     * look correct "through the glass" however the phone is held, exactly like
+     * a stock camera app.
+     */
+    private var previewRotationDegrees = 0
     private val stMatrix = FloatArray(16)
 
     @Volatile
@@ -85,7 +95,8 @@ class GlRenderPipeline(
         encoderSurface: Surface,
         width: Int,
         height: Int,
-        rotation: Int,
+        metadataRotation: Int,
+        previewRotation: Int,
         burnIn: Boolean,
         overlays: OverlaySource?,
     ) {
@@ -95,7 +106,8 @@ class GlRenderPipeline(
         handler = h
         streamWidth = width
         streamHeight = height
-        rotationDegrees = rotation
+        metadataRotationDegrees = metadataRotation
+        previewRotationDegrees = previewRotation
         burnInOverlay = burnIn
         overlaySource = overlays
 
@@ -127,7 +139,8 @@ class GlRenderPipeline(
                 cameraSurface = Surface(st)
                 diagnostics.log(
                     "GL",
-                    "pipeline up: ${streamWidth}x$streamHeight native, rotation metadata ${rotationDegrees}°",
+                    "pipeline up: ${streamWidth}x$streamHeight native, " +
+                        "metadata ${metadataRotationDegrees}°, preview ${previewRotationDegrees}°",
                 )
             } catch (e: Exception) {
                 initError = e
@@ -188,7 +201,7 @@ class GlRenderPipeline(
             core.swapBuffers(encSurface)
             framesRendered.incrementAndGet()
 
-            // --- Preview pass (optional, capped): rotated to upright ---
+            // --- Preview pass (optional, capped): display-rotated, aspect-fit ---
             val preview = previewEglSurface
             if (preview != null) {
                 val now = System.nanoTime()
@@ -197,7 +210,19 @@ class GlRenderPipeline(
                     lastPreviewFrameNs = now
                     core.makeCurrent(preview)
                     GLES20.glViewport(0, 0, previewWidth, previewHeight)
-                    oesProgram?.draw(cameraTexId, FrameGeometry.previewTexMatrix(stMatrix, rotationDegrees))
+                    GLES20.glClearColor(0f, 0f, 0f, 1f)
+                    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                    val fitRect = FrameGeometry.aspectFitRectNdc(
+                        imageWidth = FrameGeometry.uprightWidth(streamWidth, streamHeight, previewRotationDegrees),
+                        imageHeight = FrameGeometry.uprightHeight(streamWidth, streamHeight, previewRotationDegrees),
+                        viewportWidth = previewWidth,
+                        viewportHeight = previewHeight,
+                    )
+                    oesProgram?.drawFit(
+                        cameraTexId,
+                        FrameGeometry.previewTexMatrix(stMatrix, previewRotationDegrees),
+                        fitRect,
+                    )
                     if (!core.swapBuffers(preview)) {
                         diagnostics.log("GL", "preview swap failed; detaching")
                         core.makeCurrent(encSurface)

@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -114,14 +113,15 @@ fun MainScreen(
     ) {
         StatusChipRow(status, gpsQuality = gps.quality, thermal = thermal.state, batteryPercent = power.batteryPercent, charging = power.isCharging, micActive = status.micActive)
 
-        // --- Live preview: the dominant element ---
-        val aspect = status.outputWidth.toFloat() / status.outputHeight.coerceAtLeast(1)
+        // --- Live preview: prominent but deliberately NOT full screen.
+        // Fixed-height box; the GL pass letterboxes the frame inside it, so
+        // the image is never stretched whatever the camera orientation.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .aspectRatio(aspect.coerceIn(0.5f, 2.2f))
+                .height(300.dp)
                 .background(Color.Black),
         ) {
             CameraPreview()

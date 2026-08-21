@@ -132,6 +132,40 @@ class FrameGeometryTest {
         assertThat(t).isWithin(1e-4f).of(0.7f)
     }
 
+    // ------------- preview aspect-fit (letterbox) -------------
+
+    @Test
+    fun `aspect fit letterboxes a wide image in a tall viewport`() {
+        // 16:9 image into a 1:1 viewport → full width, reduced height.
+        val r = FrameGeometry.aspectFitRectNdc(1920, 1080, 1000, 1000)
+        assertThat(r[0]).isWithin(1e-4f).of(-1f)
+        assertThat(r[2]).isWithin(1e-4f).of(1f)
+        assertThat(r[3]).isWithin(1e-4f).of(1080f / 1920f)
+        assertThat(r[1]).isWithin(1e-4f).of(-1080f / 1920f)
+    }
+
+    @Test
+    fun `aspect fit pillarboxes a tall image in a wide viewport`() {
+        // 9:16 upright image into a 300dp-ish wide box → full height, reduced width.
+        val r = FrameGeometry.aspectFitRectNdc(1080, 1920, 1000, 750)
+        assertThat(r[1]).isWithin(1e-4f).of(-1f)
+        assertThat(r[3]).isWithin(1e-4f).of(1f)
+        val expectedHalfWidth = (1080f / 1920f) / (1000f / 750f)
+        assertThat(r[2]).isWithin(1e-4f).of(expectedHalfWidth)
+    }
+
+    @Test
+    fun `aspect fit with matching aspect fills the viewport`() {
+        val r = FrameGeometry.aspectFitRectNdc(1920, 1080, 960, 540)
+        assertThat(r.toList()).isEqualTo(listOf(-1f, -1f, 1f, 1f))
+    }
+
+    @Test
+    fun `aspect fit degrades safely on zero dimensions`() {
+        val r = FrameGeometry.aspectFitRectNdc(0, 0, 100, 100)
+        assertThat(r.toList()).isEqualTo(listOf(-1f, -1f, 1f, 1f))
+    }
+
     // ------------- overlay placement in buffer space -------------
 
     @Test

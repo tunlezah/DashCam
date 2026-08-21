@@ -37,9 +37,21 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            // Re-evaluate GPS now that permissions may have changed.
+            graph.orchestrator.setUiVisible(true)
             val cameraGranted = grants[Manifest.permission.CAMERA] == true
             if (cameraGranted) maybeAutoStart()
         }
+
+    override fun onStart() {
+        super.onStart()
+        graph.orchestrator.setUiVisible(true)
+    }
+
+    override fun onStop() {
+        graph.orchestrator.setUiVisible(false)
+        super.onStop()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

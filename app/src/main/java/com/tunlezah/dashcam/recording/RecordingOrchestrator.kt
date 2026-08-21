@@ -147,6 +147,32 @@ class RecordingOrchestrator(
     private var cameraRetries = 0
     private var encoderRetries = 0
 
+    // GPS runs whenever it is useful — while recording OR while the UI is
+    // visible (speed panel, map follow) — not only during recording. Field
+    // report: the map never centred because GPS only ran while recording.
+    @Volatile
+    private var uiVisible = false
+
+    @Volatile
+    private var gpsRunning = false
+
+    fun setUiVisible(visible: Boolean) {
+        uiVisible = visible
+        updateGpsRunning()
+    }
+
+    @Synchronized
+    private fun updateGpsRunning() {
+        val desired = settings.gpsEnabled && hasLocationPermission() && (isRecording || uiVisible)
+        if (desired && !gpsRunning) {
+            gpsManager.start(settings.gpsUpdateIntervalMs)
+            gpsRunning = true
+        } else if (!desired && gpsRunning) {
+            gpsManager.stop()
+            gpsRunning = false
+        }
+    }
+
     fun start() {
         powerMonitor.start()
         thermalEngine.start()
@@ -267,6 +293,7 @@ class RecordingOrchestrator(
                 state = finalState,
                 statusMessage = if (finalState == RecorderState.IDLE) "" else reason,
             )
+            updateGpsRunning()
         }
     }
 
@@ -282,17 +309,23 @@ class RecordingOrchestrator(
             return false
         }
 
-        // Mount orientation from gravity → MP4 rotation metadata. Frames are
-        // recorded sensor-native; players rotate at display time
-        // (docs/architecture.md §11 — reworked after on-device feedback).
+        // Two independent rotation references, like a stock camera app:
+        //  - RECORDED FILE: gravity-detected mount orientation → MP4 rotation
+        //    metadata; frames stay sensor-native (docs/architecture.md §11).
+        //  - PREVIEW: relative to the portrait-locked display (rotation 0) —
+        //    always looks correct "through the glass" however the phone is
+        //    held, and never affects the recording.
         val gravity = sampleGravity()
         val mountRotation = FrameGeometry.mountRotationFromGravity(gravity.first, gravity.second)
         val bufferRotation = FrameGeometry.bufferRotationDegrees(
             cameraCaps.sensorOrientationDegrees, mountRotation, facingFront = !facingBack,
         )
+        val previewRotation = FrameGeometry.bufferRotationDegrees(
+            cameraCaps.sensorOrientationDegrees, mountRotation = 0, facingFront = !facingBack,
+        )
         diagnostics.log(
             "Orchestrator",
-            "mount=$mountRotation° rotation metadata=${bufferRotation}° " +
+            "mount=$mountRotation° metadata=${bufferRotation}° preview=${previewRotation}° " +
                 "(sensor=${cameraCaps.sensorOrientationDegrees}°), recording ${profile.width}x${profile.height} native",
         )
 
@@ -333,7 +366,8 @@ class RecordingOrchestrator(
                 encoderSurface = requireNotNull(enc.inputSurface),
                 width = profile.width,
                 height = profile.height,
-                rotation = bufferRotation,
+                metadataRotation = bufferRotation,
+                previewRotation = previewRotation,
                 burnIn = s.overlayMode == OverlayMode.STAMP && overlay.anyEnabled(s),
                 overlays = overlay,
             )
@@ -360,8 +394,8 @@ class RecordingOrchestrator(
             }
 
             // GPS + GPX.
+            updateGpsRunning()
             if (s.gpsEnabled && hasLocationPermission()) {
-                gpsManager.start(s.gpsUpdateIntervalMs)
                 if (s.gpsWriteGpxTrack) {
                     val trackFile = File(
                         storageLocations.tracksDir,
@@ -401,8 +435,9 @@ class RecordingOrchestrator(
         glPipeline = null
         runCatching { gpxWriter?.close() }
         gpxWriter = null
-        runCatching { gpsManager.stop() }
         overlayRenderer = null
+        // GPS deliberately NOT stopped here: it keeps serving the visible UI
+        // (speed panel, map). updateGpsRunning() reconciles after state changes.
     }
 
     // ------------------------------------------------------------------
@@ -845,6 +880,7 @@ class RecordingOrchestrator(
 
     private fun onSettingsChanged(previous: DashcamSettings, current: DashcamSettings) {
         eventDetector.sensitivity = current.eventSensitivity
+        if (previous.gpsEnabled != current.gpsEnabled) updateGpsRunning()
         if (isRecording) {
             sink?.configure(current.segmentMinutes, current.gpsEmbedInVideoMetadata)
             glPipeline?.setBurnInOverlay(

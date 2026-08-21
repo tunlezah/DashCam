@@ -3,26 +3,31 @@ package com.tunlezah.dashcam.recording.engine
 import android.opengl.Matrix
 
 /**
- * Pure orientation/crop math for the GL stage (unit tested — this is where a
- * sign error silently records sideways video).
+ * Orientation math for the recording pipeline.
+ *
+ * Strategy (reworked after on-device feedback): the encoder always receives
+ * the camera buffer EXACTLY as the sensor produces it — no pixel rotation, no
+ * cropping. Upright display is achieved the way every stock camera app does
+ * it: a standard MP4 rotation metadata value computed from the documented
+ * Camera2 relative-rotation formula. Players (ExoPlayer, VLC, gallery apps,
+ * editors) apply it universally, and the recording can never be ruined by a
+ * render-transform bug — the only orientation-sensitive rendering left is the
+ * preview and the burned-in overlay, both cosmetic and correctable.
  *
  * Terminology:
  *  - sensorOrientation: CameraCharacteristics.SENSOR_ORIENTATION (0/90/180/270)
  *  - mountRotation: how the DEVICE is physically rotated from natural
- *    (portrait) orientation, derived from the accelerometer gravity vector
- *    because a dashcam runs with a locked UI and often a switched-off screen —
- *    the Display rotation is useless for a windshield cradle.
+ *    (portrait) orientation, derived from the accelerometer gravity vector —
+ *    a dashcam runs with the screen possibly off in a windshield cradle, so
+ *    Display rotation is not reliable.
  */
 object FrameGeometry {
 
     /**
      * Device rotation (0/90/180/270) from gravity in device coordinates.
-     * Android device axes: +x right, +y up (portrait), z out of the screen.
-     * Gravity pulls DOWN, so when upright portrait the accelerometer reads
-     * +9.8 on +y.
-     *
-     * 90 = device rotated counter-clockwise (landscape, left edge up —
-     * Surface.ROTATION_90 equivalent).
+     * Android device axes: +x right, +y up (portrait). Gravity pulls down, so
+     * upright portrait reads +9.8 on +y. 90 = device rotated counter-clockwise
+     * (landscape, Surface.ROTATION_90 equivalent).
      */
     fun mountRotationFromGravity(ax: Float, ay: Float): Int {
         return if (kotlin.math.abs(ay) >= kotlin.math.abs(ax)) {
@@ -33,8 +38,9 @@ object FrameGeometry {
     }
 
     /**
-     * How many degrees the camera buffer content must be rotated clockwise to
-     * appear world-upright. Standard Camera2 relative-rotation formula.
+     * The MP4 rotation metadata value: degrees the stored frames must be
+     * rotated CLOCKWISE at display time to appear world-upright. This is the
+     * standard Camera2 relative-rotation formula.
      */
     fun bufferRotationDegrees(sensorOrientation: Int, mountRotation: Int, facingFront: Boolean): Int {
         return if (facingFront) {
@@ -44,100 +50,65 @@ object FrameGeometry {
         }
     }
 
-    /**
-     * Output (encoded) size for a given camera stream size, rotation, and crop
-     * policy. When the upright image is portrait (rotation 90/270 relative to
-     * the landscape stream) and a 16:9 crop is requested, the result is a
-     * landscape band cut from the portrait image: width = stream short side,
-     * height = width * 9/16 — see docs/architecture.md §11 for the physics.
-     */
-    data class OutputGeometry(
-        val outputWidth: Int,
-        val outputHeight: Int,
-        /** Rotation applied in the shader (degrees clockwise). */
-        val rotationDegrees: Int,
-        /** Crop of the upright image, normalized [0..1]: left, top, right, bottom. */
-        val cropLeft: Float,
-        val cropTop: Float,
-        val cropRight: Float,
-        val cropBottom: Float,
-    )
+    /** Width of the frame as displayed after rotation is applied. */
+    fun uprightWidth(streamWidth: Int, streamHeight: Int, rotationDegrees: Int): Int =
+        if (rotationDegrees % 180 == 0) streamWidth else streamHeight
 
-    fun solve(
-        streamWidth: Int,
-        streamHeight: Int,
-        rotationDegrees: Int,
-        cropTo16x9Landscape: Boolean,
-        /** 0 = crop band centred; negative moves it up (sky), positive down (bonnet). */
-        verticalBias: Float = -0.08f,
-    ): OutputGeometry {
-        val sideways = rotationDegrees == 90 || rotationDegrees == 270
-        val uprightWidth = if (sideways) streamHeight else streamWidth
-        val uprightHeight = if (sideways) streamWidth else streamHeight
-
-        if (!sideways || !cropTo16x9Landscape) {
-            return OutputGeometry(
-                outputWidth = align2(uprightWidth),
-                outputHeight = align2(uprightHeight),
-                rotationDegrees = rotationDegrees,
-                cropLeft = 0f, cropTop = 0f, cropRight = 1f, cropBottom = 1f,
-            )
-        }
-
-        // Portrait upright image (e.g. 1080×1920): cut a 16:9 landscape band.
-        val outW = uprightWidth
-        val outH = (uprightWidth * 9 / 16)
-        val bandFraction = outH.toFloat() / uprightHeight
-        val centre = 0.5f + verticalBias
-        var top = centre - bandFraction / 2f
-        top = top.coerceIn(0f, 1f - bandFraction)
-        return OutputGeometry(
-            outputWidth = align2(outW),
-            outputHeight = align2(outH),
-            rotationDegrees = rotationDegrees,
-            cropLeft = 0f,
-            cropTop = top,
-            cropRight = 1f,
-            cropBottom = top + bandFraction,
-        )
-    }
+    /** Height of the frame as displayed after rotation is applied. */
+    fun uprightHeight(streamWidth: Int, streamHeight: Int, rotationDegrees: Int): Int =
+        if (rotationDegrees % 180 == 0) streamHeight else streamWidth
 
     /**
-     * Composes the texture-coordinate matrix handed to the OES shader:
-     * final = surfaceTextureMatrix × rotation × crop, all in texture space.
-     * The crop rect is specified on the UPRIGHT image; rotation maps upright
-     * coordinates back onto the raw buffer the SurfaceTexture matrix expects.
+     * Texture matrix for the ENCODER pass: the SurfaceTexture transform only —
+     * the recorded frames are the raw buffer, untouched.
      */
-    fun composeTexMatrix(
-        surfaceTextureMatrix: FloatArray,
-        geometry: OutputGeometry,
-    ): FloatArray {
-        val crop = FloatArray(16)
-        Matrix.setIdentityM(crop, 0)
-        // Texture space: (0,0) is the first row of the buffer. The upright-image
-        // crop [left,top,right,bottom] maps to a scale+translate.
-        val sx = geometry.cropRight - geometry.cropLeft
-        val sy = geometry.cropBottom - geometry.cropTop
-        Matrix.translateM(crop, 0, geometry.cropLeft, geometry.cropTop, 0f)
-        Matrix.scaleM(crop, 0, sx, sy, 1f)
+    fun encoderTexMatrix(surfaceTextureMatrix: FloatArray): FloatArray =
+        surfaceTextureMatrix.copyOf()
 
+    /**
+     * Texture matrix for the PREVIEW pass: shows the frame world-upright,
+     * i.e. applies the same rotation a video player will apply from metadata.
+     *
+     * Derivation (unit-tested): "display = buffer rotated θ clockwise" in
+     * post-SurfaceTexture texture space (origin bottom-left) is a texcoord
+     * rotation of +θ (counter-clockwise-positive, android.opengl.Matrix
+     * convention) about the texture centre. For θ=90 the corner mapping is
+     * (s,t) → (1−t, s).
+     */
+    fun previewTexMatrix(surfaceTextureMatrix: FloatArray, rotationDegrees: Int): FloatArray {
+        if (rotationDegrees % 360 == 0) return surfaceTextureMatrix.copyOf()
         val rot = FloatArray(16)
         Matrix.setIdentityM(rot, 0)
-        if (geometry.rotationDegrees != 0) {
-            // Rotate about the texture centre. Output quad texcoords are in
-            // upright-image space; rotating by -degrees maps them onto raw
-            // buffer coordinates.
-            Matrix.translateM(rot, 0, 0.5f, 0.5f, 0f)
-            Matrix.rotateM(rot, 0, -geometry.rotationDegrees.toFloat(), 0f, 0f, 1f)
-            Matrix.translateM(rot, 0, -0.5f, -0.5f, 0f)
-        }
-
-        val tmp = FloatArray(16)
-        Matrix.multiplyMM(tmp, 0, rot, 0, crop, 0)
+        Matrix.translateM(rot, 0, 0.5f, 0.5f, 0f)
+        Matrix.rotateM(rot, 0, rotationDegrees.toFloat(), 0f, 0f, 1f)
+        Matrix.translateM(rot, 0, -0.5f, -0.5f, 0f)
         val result = FloatArray(16)
-        Matrix.multiplyMM(result, 0, surfaceTextureMatrix, 0, tmp, 0)
+        Matrix.multiplyMM(result, 0, surfaceTextureMatrix, 0, rot, 0)
         return result
     }
 
-    private fun align2(v: Int): Int = v and 1.inv()
+    /**
+     * NDC rectangle [left, bottom, right, top] where the burned-in overlay
+     * strip must be drawn IN BUFFER SPACE so that, after the player applies
+     * the rotation metadata, it appears as a horizontal strip along the
+     * bottom of the upright video.
+     *
+     * Buffer-space mapping (derived pixel-by-pixel, unit-tested):
+     *   θ=0   → bottom edge      θ=90  → right edge (vertical)
+     *   θ=180 → top edge         θ=270 → left edge (vertical)
+     *
+     * @param stripFraction the strip thickness as a fraction of the UPRIGHT
+     *   frame height (e.g. 1/12).
+     */
+    fun overlayRectNdc(rotationDegrees: Int, stripFraction: Float): FloatArray {
+        // The strip is stripFraction of the upright height; along whichever
+        // buffer axis that maps to, the NDC thickness is 2 × stripFraction.
+        val t = 2f * stripFraction
+        return when (((rotationDegrees % 360) + 360) % 360) {
+            90 -> floatArrayOf(1f - t, -1f, 1f, 1f)   // right edge
+            270 -> floatArrayOf(-1f, -1f, -1f + t, 1f) // left edge
+            180 -> floatArrayOf(-1f, 1f - t, 1f, 1f)   // top edge
+            else -> floatArrayOf(-1f, -1f, 1f, -1f + t) // bottom edge
+        }
+    }
 }

@@ -4,6 +4,7 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import androidx.media3.common.util.MediaFormatUtil
 import androidx.media3.container.Mp4LocationData
+import androidx.media3.container.Mp4OrientationData
 import androidx.media3.muxer.BufferInfo
 import androidx.media3.muxer.FragmentedMp4Muxer
 import com.tunlezah.dashcam.core.DiagnosticsLog
@@ -74,15 +75,17 @@ class SegmentSink(
     private var syncRequested = false
     private var starvedReported = false
     private var location: Pair<Double, Double>? = null
+    private var rotationDegrees = 0
 
     @Volatile
     var segmentsWritten: Long = 0
         private set
 
-    fun configure(segmentMinutes: Int, embedLocation: Boolean) {
+    fun configure(segmentMinutes: Int, embedLocation: Boolean, rotationDegrees: Int = this.rotationDegrees) {
         synchronized(lock) {
             segmentDurationUs = segmentMinutes * 60 * 1_000_000L
             if (!embedLocation) location = null
+            this.rotationDegrees = rotationDegrees
         }
     }
 
@@ -205,6 +208,11 @@ class SegmentSink(
             val m = FragmentedMp4Muxer.Builder(out.channel)
                 .setFragmentDurationMs(FRAGMENT_DURATION_MS)
                 .build()
+            // Standard MP4 display rotation — frames are stored sensor-native
+            // and players rotate at display time (docs/architecture.md §11).
+            if (rotationDegrees != 0) {
+                m.addMetadataEntry(Mp4OrientationData(rotationDegrees))
+            }
             location?.let { (lat, lon) ->
                 runCatching { m.addMetadataEntry(Mp4LocationData(lat.toFloat(), lon.toFloat())) }
             }

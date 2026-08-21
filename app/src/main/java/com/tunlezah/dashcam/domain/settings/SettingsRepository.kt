@@ -52,7 +52,6 @@ class SettingsRepository(private val context: Context) {
                 microphoneEnabled = p[Keys.MIC_ENABLED] ?: defaults.microphoneEnabled,
                 cameraFacing = p.enum(Keys.CAMERA_FACING, defaults.cameraFacing),
                 stabilizationEnabled = p[Keys.STABILIZATION] ?: defaults.stabilizationEnabled,
-                portraitCaptureMode = p.enum(Keys.PORTRAIT_MODE, defaults.portraitCaptureMode),
                 plugInAction = p.enum(Keys.PLUG_IN_ACTION, defaults.plugInAction),
                 unplugAction = p.enum(Keys.UNPLUG_ACTION, defaults.unplugAction),
                 unplugStopDelaySeconds = p[Keys.UNPLUG_DELAY] ?: defaults.unplugStopDelaySeconds,
@@ -101,7 +100,6 @@ class SettingsRepository(private val context: Context) {
             p[Keys.MIC_ENABLED] = updated.microphoneEnabled
             p[Keys.CAMERA_FACING] = updated.cameraFacing.name
             p[Keys.STABILIZATION] = updated.stabilizationEnabled
-            p[Keys.PORTRAIT_MODE] = updated.portraitCaptureMode.name
             p[Keys.PLUG_IN_ACTION] = updated.plugInAction.name
             p[Keys.UNPLUG_ACTION] = updated.unplugAction.name
             p[Keys.UNPLUG_DELAY] = updated.unplugStopDelaySeconds
@@ -145,7 +143,6 @@ class SettingsRepository(private val context: Context) {
         val MIC_ENABLED = booleanPreferencesKey("microphone_enabled")
         val CAMERA_FACING = stringPreferencesKey("camera_facing")
         val STABILIZATION = booleanPreferencesKey("stabilization_enabled")
-        val PORTRAIT_MODE = stringPreferencesKey("portrait_capture_mode")
         val PLUG_IN_ACTION = stringPreferencesKey("plug_in_action")
         val UNPLUG_ACTION = stringPreferencesKey("unplug_action")
         val UNPLUG_DELAY = intPreferencesKey("unplug_stop_delay_seconds")

@@ -34,15 +34,6 @@ enum class AppTheme { SYSTEM, LIGHT, DARK, OLED }
 
 enum class CameraFacing { BACK, FRONT }
 
-/** What happens to the 16:9 output when the phone is mounted in portrait. */
-enum class PortraitCaptureMode {
-    /** Crop a 16:9 landscape band from the portrait frame (conventional output). */
-    CROP_16_9,
-
-    /** Record the full 9:16 portrait frame (maximum vertical coverage). */
-    FULL_FRAME,
-}
-
 /**
  * The complete, validated application settings model. Persisted via DataStore;
  * every field has a deliberate default chosen for the Moto G04 baseline —
@@ -88,10 +79,10 @@ data class DashcamSettings(
     // Audio — OFF by default (privacy; permission requested only when enabled)
     val microphoneEnabled: Boolean = false,
 
-    // Camera
+    // Camera. Frames are always recorded sensor-native with standard MP4
+    // rotation metadata — no rotation/crop options to get wrong.
     val cameraFacing: CameraFacing = CameraFacing.BACK,
     val stabilizationEnabled: Boolean = true,
-    val portraitCaptureMode: PortraitCaptureMode = PortraitCaptureMode.CROP_16_9,
 
     // Power
     val plugInAction: PlugInAction = PlugInAction.START_RECORDING,

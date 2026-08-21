@@ -45,7 +45,6 @@ import com.tunlezah.dashcam.domain.settings.DashcamSettings
 import com.tunlezah.dashcam.domain.settings.EventSensitivity
 import com.tunlezah.dashcam.domain.settings.OverlayMode
 import com.tunlezah.dashcam.domain.settings.PlugInAction
-import com.tunlezah.dashcam.domain.settings.PortraitCaptureMode
 import com.tunlezah.dashcam.domain.settings.QualityMode
 import com.tunlezah.dashcam.domain.settings.SettingsValidator
 import com.tunlezah.dashcam.domain.settings.UnplugAction
@@ -292,18 +291,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                     settings.stabilizationEnabled && supported,
                 ) { update { s -> s.copy(stabilizationEnabled = it) } }
             }
-            item {
-                ChoiceRow(
-                    title = "Portrait mounting output",
-                    subtitle = if (settings.portraitCaptureMode == PortraitCaptureMode.CROP_16_9)
-                        "Wide 16:9 road band (recommended)" else "Full portrait frame",
-                    options = listOf(
-                        PortraitCaptureMode.CROP_16_9 to "Wide 16:9 road band (recommended)",
-                        PortraitCaptureMode.FULL_FRAME to "Full portrait frame (9:16 video)",
-                    ),
-                    selected = settings.portraitCaptureMode,
-                ) { update { s -> s.copy(portraitCaptureMode = it) } }
-            }
 
             // ---------------- Power ----------------
             item { SectionHeader("Power") }
@@ -401,7 +388,80 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             item {
                 val mapFile by graph.mapFileManager.activeMapFile.collectAsStateWithLifecycle()
-                val importProgress by graph.mapFileManager.importProgress.collectAsStateWithLifecycle()
+                val progress by graph.mapFileManager.importProgress.collectAsStateWithLifecycle()
+                var showRegionDialog by remember { mutableStateOf(false) }
+                val transferRunning = progress?.done == false
+
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !transferRunning) { showRegionDialog = true }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                ) {
+                    Text("Download offline map (Australia)", style = MaterialTheme.typography.bodyLarge)
+                    val p = progress
+                    Text(
+                        when {
+                            p != null && !p.done ->
+                                if (p.totalBytes > 0)
+                                    "Downloading ${p.label}… %.0f / %.0f MB".format(p.bytesCopied / 1e6, p.totalBytes / 1e6)
+                                else "Transferring ${p.label}… %.0f MB".format(p.bytesCopied / 1e6)
+                            p?.error != null -> "Failed: ${p.error}"
+                            mapFile != null ->
+                                "Active: ${mapFile?.name} (%.0f MB) — tap to change region".format((mapFile?.length() ?: 0) / 1e6)
+                            else -> "No map yet. Downloads once over Wi-Fi, then works fully offline."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (transferRunning) {
+                    androidx.compose.material3.TextButton(
+                        onClick = { graph.mapFileManager.cancelTransfer() },
+                        modifier = Modifier.padding(start = 8.dp),
+                    ) { Text("Cancel download") }
+                }
+
+                if (showRegionDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showRegionDialog = false },
+                        title = { Text("Download map region") },
+                        text = {
+                            Column {
+                                Text(
+                                    "One-off download; the map then works with no SIM or internet. " +
+                                        "Data © OpenStreetMap contributors.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                com.tunlezah.dashcam.map.MapRegionCatalog.regions.forEach { region ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                showRegionDialog = false
+                                                scope.launch { graph.mapFileManager.downloadRegion(region) }
+                                            }
+                                            .padding(vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(region.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            "~${region.approxSizeMb} MB",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showRegionDialog = false }) { Text("Close") }
+                        },
+                    )
+                }
+            }
+            item {
                 val mapPicker = rememberLauncherForActivityResult(
                     ActivityResultContracts.OpenDocument()
                 ) { uri ->
@@ -417,17 +477,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                         .clickable { mapPicker.launch(arrayOf("application/octet-stream", "*/*")) }
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
-                    Text("Import offline map (.pmtiles)", style = MaterialTheme.typography.bodyLarge)
-                    val progress = importProgress
+                    Text("Import a map file instead (.pmtiles)", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        when {
-                            progress != null && !progress.done ->
-                                "Importing… %.0f MB".format(progress.bytesCopied / 1e6)
-                            progress?.error != null -> "Import failed: ${progress.error}"
-                            mapFile != null ->
-                                "Active: ${mapFile?.name} (%.0f MB)".format((mapFile?.length() ?: 0) / 1e6)
-                            else -> "No map imported. See docs/offline-maps.md for Australian extracts."
-                        },
+                        "For custom extracts — see docs/offline-maps.md",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

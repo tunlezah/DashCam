@@ -14,12 +14,14 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * The frame router (docs/architecture.md §4): a single camera output
  * (SurfaceTexture) is fanned out on a dedicated GL thread to
- *  1. the encoder input surface (always, at full rate — this IS the recording)
+ *  1. the encoder input surface (always, at full rate — this IS the recording).
+ *     Frames are passed through UNROTATED and UNCROPPED; upright display comes
+ *     from MP4 rotation metadata (see FrameGeometry). Only the burn-in overlay
+ *     is composited, pre-rotated into buffer space by OverlayRenderer.
  *  2. the preview surface (optional, frame-rate capped, detachable at runtime
- *     for screen-off/thermal shedding without touching camera or encoder)
- *
- * The overlay strip is drawn into the ENCODER path only when burn-in is
- * enabled; the preview always shows it (UI feedback costs nothing extra).
+ *     for screen-off/thermal shedding without touching camera or encoder).
+ *     The preview rotates the frame to upright — a purely cosmetic transform
+ *     that can never affect what is recorded.
  */
 class GlRenderPipeline(
     private val diagnostics: DiagnosticsLog,
@@ -46,7 +48,9 @@ class GlRenderPipeline(
     var cameraSurface: Surface? = null
         private set
 
-    private var geometry: FrameGeometry.OutputGeometry? = null
+    private var streamWidth = 0
+    private var streamHeight = 0
+    private var rotationDegrees = 0
     private val stMatrix = FloatArray(16)
 
     @Volatile
@@ -74,12 +78,14 @@ class GlRenderPipeline(
     /**
      * Bring the pipeline up. Must be called before the camera session is
      * created. [encoderSurface] is the MediaCodec input surface.
+     * [rotation] is the MP4 rotation metadata value — used here only for the
+     * preview transform and overlay placement, never to rotate recorded pixels.
      */
     fun start(
         encoderSurface: Surface,
-        streamWidth: Int,
-        streamHeight: Int,
-        outputGeometry: FrameGeometry.OutputGeometry,
+        width: Int,
+        height: Int,
+        rotation: Int,
         burnIn: Boolean,
         overlays: OverlaySource?,
     ) {
@@ -87,7 +93,9 @@ class GlRenderPipeline(
         thread = t
         val h = Handler(t.looper)
         handler = h
-        geometry = outputGeometry
+        streamWidth = width
+        streamHeight = height
+        rotationDegrees = rotation
         burnInOverlay = burnIn
         overlaySource = overlays
 
@@ -117,8 +125,10 @@ class GlRenderPipeline(
                 st.setOnFrameAvailableListener({ onFrameAvailable() }, h)
                 surfaceTexture = st
                 cameraSurface = Surface(st)
-                diagnostics.log("GL", "pipeline up: stream ${streamWidth}x$streamHeight -> " +
-                    "${outputGeometry.outputWidth}x${outputGeometry.outputHeight} rot=${outputGeometry.rotationDegrees}")
+                diagnostics.log(
+                    "GL",
+                    "pipeline up: ${streamWidth}x$streamHeight native, rotation metadata ${rotationDegrees}°",
+                )
             } catch (e: Exception) {
                 initError = e
             } finally {
@@ -158,29 +168,27 @@ class GlRenderPipeline(
         val core = egl ?: return
         val st = surfaceTexture ?: return
         val encSurface = encoderEglSurface ?: return
-        val geo = geometry ?: return
         try {
             core.makeCurrent(encSurface)
             st.updateTexImage()
             st.getTransformMatrix(stMatrix)
-            val texMatrix = FrameGeometry.composeTexMatrix(stMatrix, geo)
 
-            // --- Encoder pass (the recording) ---
-            GLES20.glViewport(0, 0, geo.outputWidth, geo.outputHeight)
-            oesProgram?.draw(cameraTexId, texMatrix)
+            // --- Encoder pass (the recording): raw buffer, untouched ---
+            GLES20.glViewport(0, 0, streamWidth, streamHeight)
+            oesProgram?.draw(cameraTexId, FrameGeometry.encoderTexMatrix(stMatrix))
             val source = overlaySource
-            if (source != null) {
+            if (source != null && burnInOverlay) {
                 val overlay = source.currentOverlay()
                 if (overlay != null) {
                     overlayProgram?.maybeUpload(overlay.first, overlay.second)
-                    if (burnInOverlay) overlayProgram?.draw(source.overlayRect())
+                    overlayProgram?.draw(source.overlayRect())
                 }
             }
             core.setPresentationTime(encSurface, st.timestamp)
             core.swapBuffers(encSurface)
             framesRendered.incrementAndGet()
 
-            // --- Preview pass (optional, capped) ---
+            // --- Preview pass (optional, capped): rotated to upright ---
             val preview = previewEglSurface
             if (preview != null) {
                 val now = System.nanoTime()
@@ -189,9 +197,7 @@ class GlRenderPipeline(
                     lastPreviewFrameNs = now
                     core.makeCurrent(preview)
                     GLES20.glViewport(0, 0, previewWidth, previewHeight)
-                    oesProgram?.draw(cameraTexId, texMatrix)
-                    // Preview always shows the overlay so the driver sees what's stamped.
-                    if (source != null) overlayProgram?.draw(source.overlayRect())
+                    oesProgram?.draw(cameraTexId, FrameGeometry.previewTexMatrix(stMatrix, rotationDegrees))
                     if (!core.swapBuffers(preview)) {
                         diagnostics.log("GL", "preview swap failed; detaching")
                         core.makeCurrent(encSurface)

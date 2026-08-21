@@ -1,0 +1,72 @@
+name: Map data
+
+# Generates the offline Australian map extracts the app's in-app downloader
+# uses (MapRegionCatalog), and publishes them as assets of the fixed
+# `map-data-v1` release. Data source: the Protomaps daily OpenStreetMap build
+# (https://docs.protomaps.com/basemaps/downloads), extracted via HTTP range
+# requests — nothing is self-hosted. Data © OpenStreetMap contributors (ODbL).
+#
+# Run it again any time (workflow_dispatch) to refresh the map data in place;
+# asset URLs stay stable so shipped apps keep working.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["map-data-*"]
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    name: Extract and publish Australian regions
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Install go-pmtiles
+        run: |
+          curl -sSL -o pmtiles.tar.gz \
+            https://github.com/protomaps/go-pmtiles/releases/download/v1.28.0/go-pmtiles_1.28.0_Linux_x86_64.tar.gz
+          tar xzf pmtiles.tar.gz pmtiles
+          ./pmtiles version
+
+      - name: Extract regions from the latest Protomaps daily build
+        run: |
+          set -euo pipefail
+          BUILD="https://build.protomaps.com/$(date -u +%Y%m%d).pmtiles"
+          # If today's build isn't published yet, fall back to yesterday's.
+          if ! curl -sSfI "$BUILD" > /dev/null; then
+            BUILD="https://build.protomaps.com/$(date -u -d yesterday +%Y%m%d).pmtiles"
+          fi
+          echo "Using $BUILD"
+          mkdir -p out
+          extract() { ./pmtiles extract "$BUILD" "out/$1.pmtiles" --bbox="$2" --maxzoom="$3"; }
+          # Bounding boxes cover each state/territory generously (overlap is fine).
+          extract au-nsw-act "140.9,-37.65,153.7,-28.1" 14
+          extract au-vic     "140.9,-39.3,150.1,-33.9"  14
+          extract au-qld     "137.9,-29.2,153.6,-9.0"   14
+          extract au-sa      "128.9,-38.15,141.1,-25.9" 14
+          extract au-wa      "112.5,-35.2,129.1,-13.6"  14
+          extract au-tas     "143.8,-43.8,148.5,-39.5"  14
+          extract au-nt      "128.9,-26.1,138.1,-10.9"  14
+          extract au-all     "112.5,-44.2,154.1,-9.0"   12
+          ls -lah out/
+          # Sanity: every archive must be readable by the pmtiles CLI.
+          for f in out/*.pmtiles; do ./pmtiles show "$f" | head -3; done
+
+      - name: Publish to the map-data-v1 release (stable asset URLs)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: map-data-v1
+          name: Offline map data (Australia)
+          body: |
+            PMTiles extracts of the Protomaps daily OpenStreetMap build, used by
+            the app's in-app offline map downloader. States at zoom 0–14,
+            all-Australia at zoom 0–12. Map data © OpenStreetMap contributors
+            (ODbL, https://www.openstreetmap.org/copyright).
+
+            These assets are refreshed in place by the `map-data` workflow;
+            URLs are stable.
+          files: out/*.pmtiles
+          overwrite_files: true
+          make_latest: false

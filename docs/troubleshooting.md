@@ -49,12 +49,28 @@ you can help:
 - If the status reaches "Stopped: device too hot", the platform declared an
   emergency; footage up to that point is finalized and safe.
 
+## First: check which version you are actually running
+
+The running version is shown in the preview's bottom-right corner and in
+Diagnostics. Sideloading a build signed with a different key than the
+installed one fails **silently from the launcher's point of view** — the
+install errors out and the old app keeps running, so a fix can look like it
+"changed nothing". Builds up to 1.0.2 were signed with a fresh key on every
+CI run; from 1.0.3 the CI key is stable, so updates install normally (the
+first 1.0.3 install over an older build still needs one uninstall).
+
 ## The map doesn't centre on my location
 
-The map centres on the first GNSS fix and shows "Waiting for GPS…" until
-then. First fix without a SIM can take 30+ seconds and generally needs sky
-view — GNSS rarely works deep indoors. The blue centre dot is your position
-(the camera follows it). GPS now runs whenever the app is open, not only
+Versions up to 1.0.2 had a real bug here: the offline map's internal source
+URL format was one MapLibre rejects for local files, so **no tiles ever
+rendered** — the panel stayed an empty rectangle no matter what the GPS did.
+Fixed in 1.0.3; map load errors now also show on the panel itself instead of
+failing silently.
+
+Beyond that: the map centres on the first GNSS fix and shows "Waiting for
+GPS…" until then. First fix without a SIM can take 30+ seconds and generally
+needs sky view — GNSS rarely works deep indoors. The blue centre dot is your
+position (the camera follows it). GPS runs whenever the app is open, not only
 while recording. If it never centres: check Location is ON and the app has
 the location permission.
 

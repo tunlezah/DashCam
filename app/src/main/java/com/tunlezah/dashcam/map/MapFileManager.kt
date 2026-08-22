@@ -164,6 +164,14 @@ class MapFileManager(
      * light variants follow the app theme.
      */
     fun buildStyleJson(mapFile: File, dark: Boolean): String {
+        // MapLibre Native routes the URL inside "pmtiles://" through its file
+        // sources, and LocalFileSource only accepts "file://" URLs (verified
+        // against platform/default/src/mbgl/storage/local_file_source.cpp at
+        // android-v13.5.0) — a bare absolute path is rejected with "Invalid
+        // file URL" and the map silently renders only the background. So the
+        // source URL must be pmtiles://file:///abs/path, the format used by
+        // MapLibre's own Android PMTiles example.
+        val sourceUrl = "pmtiles://file://${mapFile.absolutePath}"
         val bg = if (dark) "#101418" else "#e8ecef"
         val earth = if (dark) "#161c22" else "#f4f2ec"
         val water = if (dark) "#0d2331" else "#a5c8e0"
@@ -175,7 +183,7 @@ class MapFileManager(
           "version": 8,
           "name": "dashcam-offline",
           "sources": {
-            "protomaps": { "type": "vector", "url": "pmtiles://${mapFile.absolutePath}" }
+            "protomaps": { "type": "vector", "url": "$sourceUrl" }
           },
           "layers": [
             { "id": "background", "type": "background", "paint": { "background-color": "$bg" } },

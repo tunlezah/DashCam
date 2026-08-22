@@ -1,6 +1,31 @@
 # Changelog
 
-## 1.0.2 (unreleased)
+## 1.0.3 (unreleased)
+
+Fixes from third on-device testing round ("you didn't fix a thing").
+
+- **Map actually loads now — real root cause found and fixed.** The offline
+  map's PMTiles source URL was `pmtiles:///abs/path`, but MapLibre Native's
+  local file source only accepts `file://` URLs inside the `pmtiles://`
+  scheme (verified against `local_file_source.cpp` at the exact shipped
+  version, android-v13.5.0, and MapLibre's own PMTiles example). Every tile
+  read failed silently, so the panel rendered an empty background whatever
+  the GPS did — which presented as "the map doesn't go to your location".
+  The URL is now `pmtiles://file:///abs/path`, with a unit test pinning it.
+- **Map failures are no longer silent**: style/tile load errors now show on
+  the map panel itself and land in the diagnostics log; successful style
+  load is logged too.
+- **Stale-install detection**: the running version is shown on the preview
+  (bottom-right) and in Diagnostics. CI now caches one stable dev-signing
+  keystore, so a newer CI APK installs *over* an older one instead of being
+  silently rejected for a signature mismatch — the most likely reason the
+  1.0.2 preview/map fixes appeared to change nothing. (First build after
+  this change still needs one uninstall.)
+- **Preview box hugs the video**: while recording, the preview box matches
+  the upright video's aspect ratio (max 300 dp tall) instead of floating a
+  letterboxed image inside a larger black rectangle.
+
+## 1.0.2
 
 Fixes from second on-device testing round.
 

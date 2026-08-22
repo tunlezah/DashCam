@@ -69,6 +69,25 @@ pmtiles extract https://build.protomaps.com/$(date +%Y%m%d).pmtiles au-z12.pmtil
 Copy the file to the phone (USB/Drive/etc.) and import it in Settings. The
 import streams the file into the app's `maps/` directory (progress shown).
 
+## Source URL format (hard-won)
+
+MapLibre Native's `pmtiles://` handler strips the scheme and routes the
+*inner* URL through its regular file sources. `LocalFileSource` accepts only
+URLs beginning with `file://` (`local_file_source.cpp` at android-v13.5.0) —
+a bare absolute path is rejected with "Invalid file URL", every header/tile
+read fails, and the map silently renders just the background colour. The
+style must therefore reference local data as:
+
+```
+pmtiles://file:///data/user/0/<pkg>/files/maps/<region>.pmtiles
+```
+
+`buildStyleJson` emits exactly this, a unit test pins it, and map load
+errors are now surfaced on the panel and in the diagnostics log rather than
+failing silently. (`pmtiles://asset://…` is not supported by MapLibre — the
+asset source cannot do the byte-range reads PMTiles needs — which is fine
+here: map data never ships inside the APK.)
+
 ## Rendering budget (the research playbook, all implemented)
 
 - North-up always — rotating the bearing dirties every tile every frame.

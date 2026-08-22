@@ -67,6 +67,10 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
 
     val caps = graph.capabilities
     val rows: List<Pair<String, String>> = buildList {
+        add(
+            "App version" to "${com.tunlezah.dashcam.BuildConfig.VERSION_NAME} " +
+                "(${com.tunlezah.dashcam.BuildConfig.VERSION_CODE})"
+        )
         add("Device" to caps.deviceModel)
         add("Android" to "API ${caps.apiLevel}")
         add("Tier" to graph.tier.name)

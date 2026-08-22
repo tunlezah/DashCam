@@ -29,6 +29,35 @@ profile is actually supported by that camera and encoder.
 
 Run: `./gradlew :app:connectedDebugAndroidTest`
 
+### Emulator verification of 1.0.3 (what was actually run and seen)
+
+The 1.0.3 fixes were exercised on a software-rendered Android 14 (AOSP
+x86_64) emulator — no KVM exists in the build environment, so everything ran
+under pure QEMU TCG emulation at roughly 20× slowdown. Observed first-hand
+(screenshot: `docs/verification/emulator-1.0.3-main-recording.png`):
+
+- Install, launch, auto-start countdown, and **live recording** (720p30 auto
+  profile, recording timer, loop-storage accounting "0.0 / 5.4 GB,
+  ~102 min until loop reuse").
+- The preview renders live camera frames **upright** in a box that **hugs
+  the video's aspect** (the 1.0.3 layout change), with the **v1.0.3 version
+  label** visible in the corner.
+- The full rotation chain logged by the app itself:
+  `mount=0° metadata=90° preview=90° (sensor=90°), recording 1280x720 native`.
+- Mock GNSS (`adb emu geo fix`) consumed: GPS chip green, speed panel active.
+- The recording watchdog engaged and showed "Recovering…" when the emulated
+  camera died under host load — the recovery path is real.
+
+**Not verified visually: MapLibre tile rendering.** The TCG emulator's
+system_server crashed repeatedly under load and could not survive to a map
+render. The `pmtiles://file://` URL fix is instead verified against the
+MapLibre Native source at the exact shipped version (android-v13.5.0
+`local_file_source.cpp` accepts only `file://` inner URLs), matches
+MapLibre's own Android PMTiles example, and is pinned by a unit test; map
+load failures are now surfaced on the panel and in Diagnostics, so if
+anything else were wrong it will name itself on screen instead of rendering
+a silent empty panel.
+
 ### What is deliberately NOT claimed
 
 - No emulator can reproduce real thermal behaviour, OEM screen-off camera

@@ -39,6 +39,31 @@ jobs:
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
+      # Without this, every CI run generates a fresh debug keystore, so each
+      # build carries a different signature and sideloading a newer build over
+      # an older one FAILS unless the app is uninstalled first (losing its
+      # recordings). Caching one dev keystore keeps the signature stable
+      # across runs. The debug keystore uses the public well-known Android
+      # debug credentials — it is not a secret and grants nothing.
+      - name: Restore stable dev-signing keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: dev-debug-keystore-v1
+
+      - name: Generate dev-signing keystore if absent
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkeypair -keystore ~/.android/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug, O=DashCam Dev, C=AU"
+            echo "Generated a new dev keystore (cache was empty — installs over builds from before this run will need an uninstall first)."
+          else
+            echo "Reusing cached dev keystore — updates install over previous CI builds."
+          fi
+
       - name: Lint
         run: ./gradlew :app:lintDebug --no-daemon
 

@@ -49,9 +49,16 @@ open it. Installing the zip itself (or an unsigned APK) fails with
 Both artifacts sideload: the debug APK (package `com.tunlezah.dashcam.debug`)
 and the release APK (package `com.tunlezah.dashcam`, minified — this is the
 one to test for real-world performance). Without release secrets the release
-APK is **development-signed with the runner's debug key**, which changes
-between CI runs — to update across builds, uninstall the old copy first
-(signature mismatch otherwise blocks the update).
+APK is **development-signed**. CI caches one stable dev keystore
+(`actions/cache`, key `dev-debug-keystore-v1`), so builds share a signature
+and newer builds install over older ones. Two caveats: builds from before
+the cache existed (≤ 1.0.2) are differently signed — uninstall once when
+first moving to 1.0.3+ — and if GitHub evicts the cache (~7 days unused) a
+new key is generated and one more uninstall is needed; the build log says
+which happened. The dev keystore uses the public well-known Android debug
+credentials; it is not a secret and is never committed. **Check the version
+label on the preview (bottom-right) after installing** — if it still shows
+the old version, the install was rejected and you are running the old build.
 
 `.github/workflows/release.yml` runs on `v*` tags and attaches the release APK
 to a GitHub Release.

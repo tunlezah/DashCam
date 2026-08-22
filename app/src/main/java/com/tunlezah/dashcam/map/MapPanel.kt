@@ -49,8 +49,10 @@ fun MapPanel(
     paused: Boolean,
     theme: AppTheme,
     modifier: Modifier = Modifier,
+    onDiagnostic: (String) -> Unit = {},
 ) {
     var initFailed by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
 
     Box(
         modifier = modifier
@@ -81,6 +83,13 @@ fun MapPanel(
                         MapLibre.getInstance(ctx)
                         val view = MapView(ctx)
                         view.onCreate(null)
+                        // Failures here were previously silent (a blank panel
+                        // indistinguishable from "no tiles at this location").
+                        // Surface them on the panel and in diagnostics.
+                        view.addOnDidFailLoadingMapListener { message ->
+                            loadError = message
+                            onDiagnostic("load failed: $message")
+                        }
                         view.onStart()
                         view.onResume()
                         view.setMaximumFps(maxFps)
@@ -90,17 +99,33 @@ fun MapPanel(
                             map.uiSettings.isLogoEnabled = false
                             map.setStyle(
                                 org.maplibre.android.maps.Style.Builder().fromJson(styleJson)
-                            )
+                            ) {
+                                loadError = null
+                                onDiagnostic("style loaded (${mapFile.name})")
+                            }
                             mapRef = map
                         }
                         viewRef = view
                         view
                     } catch (e: Throwable) {
                         initFailed = true
+                        onDiagnostic("init failed: ${e.message}")
                         android.widget.FrameLayout(ctx)
                     }
                 },
             )
+            loadError?.let { err ->
+                Text(
+                    "Map error: $err",
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(6.dp)
+                        .background(Color(0xCC000000), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFFFB4AB),
+                )
+            }
             // Camera follow driven explicitly by GPS updates (not by view
             // recomposition side effects): jump-set per fix, north-up, fixed
             // zoom — the battery playbook from the research.

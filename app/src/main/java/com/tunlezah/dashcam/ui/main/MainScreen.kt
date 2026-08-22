@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -114,14 +116,32 @@ fun MainScreen(
         StatusChipRow(status, gpsQuality = gps.quality, thermal = thermal.state, batteryPercent = power.batteryPercent, charging = power.isCharging, micActive = status.micActive)
 
         // --- Live preview: prominent but deliberately NOT full screen.
-        // Fixed-height box; the GL pass letterboxes the frame inside it, so
-        // the image is never stretched whatever the camera orientation.
+        // While recording, the box hugs the upright video's aspect ratio
+        // (capped at 300 dp tall) so the image fills it exactly — no frame
+        // floating inside a larger black rectangle. Before dimensions are
+        // known it is a plain fixed-height placeholder. The GL pass still
+        // aspect-fits as a safety net, so the image can never stretch.
+        val previewAspect = if (status.outputWidth > 0 && status.outputHeight > 0) {
+            status.outputWidth.toFloat() / status.outputHeight.toFloat()
+        } else {
+            null
+        }
         Box(
             modifier = Modifier
-                .fillMaxWidth()
                 .padding(horizontal = 8.dp)
+                .align(Alignment.CenterHorizontally)
+                .then(
+                    if (previewAspect != null) {
+                        Modifier
+                            .heightIn(max = 300.dp)
+                            .aspectRatio(previewAspect, matchHeightConstraintsFirst = true)
+                    } else {
+                        Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                    }
+                )
                 .clip(RoundedCornerShape(12.dp))
-                .height(300.dp)
                 .background(Color.Black),
         ) {
             CameraPreview()
@@ -147,6 +167,17 @@ fun MainScreen(
                 }
             }
             RecordingBadge(isRecording, status.recordingStartMs, degraded = status.state == RecorderState.RECORDING_DEGRADED, modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
+            // Version label: sideload updates across differently-signed CI
+            // builds silently fail, so the running version must be visible at
+            // a glance to rule out testing a stale install.
+            Text(
+                "v${com.tunlezah.dashcam.BuildConfig.VERSION_NAME}",
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0x99FFFFFF),
+            )
         }
 
         Column(
@@ -172,6 +203,7 @@ fun MainScreen(
                         paused = com.tunlezah.dashcam.domain.thermal.ThermalPolicy
                             .mitigationsFor(thermal.state).pauseMap,
                         theme = settings.theme,
+                        onDiagnostic = { graph.diagnostics.log("Map", it) },
                     )
                 } else {
                     Text(
